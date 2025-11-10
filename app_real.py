@@ -286,7 +286,7 @@ if uploaded:
         st.session_state["gemini_summary"] = gemini_summary_via_session(st.session_state.get("gemini_chat"))
 
     st.markdown("---")
-    st.subheader("◉ AI 기반 최종 분석 보고서")
+    st.subheader("💡 AI 기반 최종 분석 보고서")
     if st.session_state["gemini_summary"]:
         st.markdown(st.session_state["gemini_summary"])
     else:
@@ -307,5 +307,6 @@ if uploaded:
 
 else:
     st.info("촬영한 이미지를 업로드하면 자동 분석을 시작합니다.")
+
 
 
