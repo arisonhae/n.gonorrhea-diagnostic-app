@@ -13,24 +13,21 @@ except Exception:
     st.stop()
 
 # --------------- 고정 파라미터 ---------------
-# 리눅스/클라우드 호환: 슬래시(/)
 MODEL_PATH_DEFAULT = "models/new_weights.pt"
-
 CONF_MIN = 0.70
 IOU = 0.50
 IMG_SIZE = 640
-RATIO_THR = 1.148       # Il/Iu 임계 (고정)
-ABS_NEG_CUTOFF = 221.0  # upper(G·p95) 경고 기준
+RATIO_THR = 1.148
+ABS_NEG_CUTOFF = 221.0
 
 BOX_THICK = 4
 FONT_SCALE = 1.15
 FONT_THICK = 3
 LABEL_ALPHA = 0.65
 
-# 색상 (BGR)
-COLOR_TUBE = (0, 255, 0)      # 초록
-COLOR_ROI  = (255, 0, 255)    # 분홍(마젠타)
-COLOR_TEXT = (255, 255, 255)  # 흰색
+COLOR_TUBE = (0, 255, 0)
+COLOR_ROI  = (255, 0, 255)
+COLOR_TEXT = (255, 255, 255)
 
 # --------------- 유틸 ---------------
 def fmt_num(x, fmt="{:.2f}"):
@@ -58,7 +55,6 @@ def safe_crop(img, xyxy):
     return img[y1:y2, x1:x2]
 
 def g_p95(crop_bgr):
-    """G 채널 95퍼센타일 (G·p95) — 변경 금지(요청 사항)"""
     if crop_bgr is None:
         return np.nan
     G = crop_bgr[:, :, 1].astype(np.float32)
@@ -71,7 +67,6 @@ def draw_label(img, text, x, y, color):
     overlay = img.copy()
     cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
     cv2.addWeighted(overlay, LABEL_ALPHA, img, 1 - LABEL_ALPHA, 0, img)
-    # 테두리 효과(검정 외곽선)
     cv2.putText(img, text, (x + 6, y - 6), cv2.FONT_HERSHEY_SIMPLEX, FONT_SCALE, (0, 0, 0), FONT_THICK + 2, cv2.LINE_AA)
     cv2.putText(img, text, (x + 6, y - 6), cv2.FONT_HERSHEY_SIMPLEX, FONT_SCALE, COLOR_TEXT, FONT_THICK, cv2.LINE_AA)
 
@@ -84,7 +79,6 @@ def draw_box(img, xyxy, color, label=None, show=True):
 
 # ---------- 표시용 안전 함수 ----------
 def _ensure_uint8_3ch(img):
-    """ndarray 이미지를 uint8 3채널 C_CONTIGUOUS로 강제"""
     if img is None or not isinstance(img, np.ndarray):
         return None
     if img.ndim == 2:
@@ -98,19 +92,17 @@ def _ensure_uint8_3ch(img):
     return img
 
 def _bgr_to_rgb_safe(img_bgr):
-    """BGR → RGB 변환을 안전하게 시도. (연속 메모리 보장)"""
     try:
         out = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         return np.ascontiguousarray(out)
     except Exception:
         try:
-            out = img_bgr[:, :, ::-1].copy()  # copy()로 연속 메모리 확보(음수 stride 제거)
+            out = img_bgr[:, :, ::-1].copy()
             return np.ascontiguousarray(out)
         except Exception:
             return None
 
 def _maybe_downscale(img, max_dim=2200):
-    """너무 큰 이미지면 표시용으로 다운스케일"""
     h, w = img.shape[:2]
     m = max(h, w)
     if m <= max_dim:
@@ -121,7 +113,6 @@ def _maybe_downscale(img, max_dim=2200):
     return np.ascontiguousarray(out)
 
 def show_bgr_image_safe(img_bgr, caption: str):
-    """Streamlit에 안전하게 이미지 표시 (RGB 변환 후 표시)"""
     img_bgr = _ensure_uint8_3ch(img_bgr)
     if img_bgr is None:
         st.error("시각화 버퍼가 손상되었거나 형식이 올바르지 않습니다.")
@@ -132,13 +123,13 @@ def show_bgr_image_safe(img_bgr, caption: str):
         st.error("이미지 색공간 변환/형식 정규화에 실패했습니다.")
         return
     try:
-        st.image(img_rgb, caption=caption, use_container_width=True)
+        # ✅ Streamlit 1.33 호환: use_column_width
+        st.image(img_rgb, caption=caption, use_column_width=True)
     except Exception as e:
         st.error(f"이미지 표시 중 오류: {e}")
 
 # --------------- 탐지 (YOLOv8 + G·p95 유지) ---------------
 def detect_pair_and_measure(img_bgr, model):
-    """pair 이미지에서 tube/roi 검출 → 위/아래 ROI G·p95 측정 → Il/Iu 비율/판정"""
     r = model.predict(source=img_bgr, imgsz=IMG_SIZE, conf=CONF_MIN, iou=IOU, verbose=False)[0]
     names = r.names
     inv = {v: k for k, v in names.items()} if isinstance(names, dict) else {v: k for k, v in enumerate(names)}
@@ -146,8 +137,6 @@ def detect_pair_and_measure(img_bgr, model):
         raise RuntimeError(f"모델 클래스에 'tube' 또는 'roi'가 없습니다. names={names}")
 
     tube_id = inv["tube"]; roi_id = inv["roi"]
-
-    # YOLO 결과 텐서 → numpy
     boxes = r.boxes.xyxy.cpu().numpy() if hasattr(r.boxes, "xyxy") else np.zeros((0, 4))
     clses = r.boxes.cls.cpu().numpy().astype(int) if hasattr(r.boxes, "cls") else np.zeros((0,), dtype=int)
     confs = r.boxes.conf.cpu().numpy() if hasattr(r.boxes, "conf") else np.zeros((0,), dtype=float)
@@ -160,7 +149,6 @@ def detect_pair_and_measure(img_bgr, model):
         elif c == roi_id:
             rois.append(to_xyxy(b));  rois_conf.append(float(cf))
 
-    # 각 tube 내부에서 conf 최대인 ROI 1개 선택
     pairs = []
     for ti, tb in enumerate(tubes):
         contained = [(ri, rc) for ri, rc in zip(rois, rois_conf) if inside(ri, tb)]
@@ -171,23 +159,20 @@ def detect_pair_and_measure(img_bgr, model):
             best_ri, best_rc = None, None
         pairs.append((tb, tubes_conf[ti], best_ri, best_rc))
 
-    # y-center로 정렬하여 위/아래 선택
     tri = []
     for (tb, tcf, rb, rcf) in pairs:
         if rb is not None:
             cy = center_y(rb)
             tri.append((cy, tb, tcf, rb, rcf))
-    tri.sort(key=lambda x: x[0])   # 위쪽 먼저
+    tri.sort(key=lambda x: x[0])
 
     upper, lower = (tri[0] if len(tri) >= 1 else None), (tri[1] if len(tri) >= 2 else None)
 
-    # 측정 (요청: G·p95 방식 유지)
     Iu = Il = np.nan
     if upper:  Iu = g_p95(safe_crop(img_bgr, upper[3]))
     if lower:  Il = g_p95(safe_crop(img_bgr, lower[3]))
     ratio = (Il / Iu) if (np.isfinite(Iu) and Iu > 0) else np.nan
 
-    # 상태/오류 메모
     notes = []
     if len(tubes) > 0 and (upper is None or lower is None):
         notes.append("ROI가 하나 이하로 검출되었습니다 (splash 의심).")
@@ -196,7 +181,6 @@ def detect_pair_and_measure(img_bgr, model):
     if np.isfinite(Iu) and Iu >= ABS_NEG_CUTOFF:
         notes.append("상단 튜브의 형광이 비정상적으로 높습니다. 위쪽 튜브에는 NC 시료를 올려주세요.")
 
-    # 최종 판정(요청: 임계/로직 변경 X)
     is_positive = (np.isfinite(ratio) and ratio >= RATIO_THR)
 
     viz_items = dict(
@@ -208,7 +192,6 @@ def detect_pair_and_measure(img_bgr, model):
     return Iu, Il, ratio, is_positive, notes, viz_items, (tubes, tubes_conf, rois, rois_conf)
 
 def overlay_visual(img_bgr, viz_items):
-    """검출 결과 시각화 — 박스/라벨 오버레이"""
     img_bgr = _ensure_uint8_3ch(img_bgr)
     if img_bgr is None:
         return None
@@ -314,9 +297,7 @@ with st.sidebar:
     st.write(f"CONF_MIN = **{CONF_MIN:.2f}**, IOU = {IOU}, IMG_SIZE = {IMG_SIZE}")
     st.write(f"ratio 임계 = **{RATIO_THR}**, ABS_NEG_CUTOFF = **{ABS_NEG_CUTOFF}**")
 
-    # Gemini 항상 활성화 (요청)
     use_gemini = True
-
     allow_reco = st.toggle("병원/의료기관 '예시' 추천 허용", value=False)
     user_region = st.text_input("지역(선택)", value="", placeholder="예: 분당, 판교, 서현동")
     st.session_state["allow_reco"] = allow_reco
@@ -325,47 +306,37 @@ with st.sidebar:
     st.markdown("---")
     _gemini_debug_panel()
 
-# 파일 업로더
 uploaded = st.file_uploader("PAIR 이미지를 업로드하세요 (jpg/png)", type=["jpg", "jpeg", "png"])
 
 if uploaded:
-    # ---------- 이미지 디코딩 ----------
     file_bytes = uploaded.read()
     file_bytes_np = np.frombuffer(file_bytes, np.uint8)
     img_bgr = cv2.imdecode(file_bytes_np, cv2.IMREAD_COLOR)
 
-    # ⛔️ 디코딩 실패 가드
     if img_bgr is None or not isinstance(img_bgr, np.ndarray) or img_bgr.ndim != 3:
         st.error("이미지 디코딩에 실패했습니다. JPG/PNG 파일인지 확인해 주세요.")
         st.stop()
 
     img_hash = hashlib.sha1(file_bytes).hexdigest()
 
-    # ---------- 모델 로드 ----------
     try:
         model = YOLO(str(model_path))
     except Exception as e:
         st.error(f"YOLO 가중치를 불러오지 못했습니다: {e}")
         st.stop()
 
-    # ---------- 분석 ----------
     try:
         Iu, Il, ratio, is_pos, notes, viz_items, raw_lists = detect_pair_and_measure(img_bgr, model)
     except Exception as e:
         st.error(f"검출/측정 중 오류: {e}")
         st.stop()
 
-    # ---------- 시각화 ----------
     viz = overlay_visual(img_bgr, viz_items)
     if viz is None:
         st.warning("시각화 이미지를 생성하지 못했습니다. 검출 결과가 부족할 수 있습니다.")
     else:
-        show_bgr_image_safe(
-            viz,
-            caption="검출 결과(굵은 박스 + CONF 라벨 / conf<0.70는 선 숨김)"
-        )
+        show_bgr_image_safe(viz, caption="검출 결과(굵은 박스 + CONF 라벨 / conf<0.70는 선 숨김)")
 
-    # ---------- 결과 요약 ----------
     st.subheader("🩺 진단 결과 요약")
     colA, colB, colC = st.columns(3)
     with colA: st.metric("상단 평균 밝기(G·p95)", fmt_num(Iu))
@@ -382,7 +353,6 @@ if uploaded:
         for n in notes:
             st.warning("• " + n)
 
-    # ---------- Gemini 컨텍스트 ----------
     context_str = (
         f"[임질 간이 판독]\n"
         f"- 상단 Iu={fmt_num(Iu)}, 하단 Il={fmt_num(Il)}, ratio={fmt_num(ratio, '{:.3f}')}\n"
@@ -390,12 +360,10 @@ if uploaded:
         + (f"- 메모: {'; '.join(notes)}" if notes else "- 메모: 특이사항 없음")
     )
 
-    # ---------- Gemini 보고서 ----------
     st.markdown("---")
     st.subheader("🧠 AI 분석 보고서")
 
     if use_gemini:
-        # 새 이미지면 세션 초기화
         if st.session_state.get("last_img_hash") != img_hash:
             st.session_state["last_img_hash"] = img_hash
             st.session_state["gemini_chat"] = _gemini_start_chat(context_str)
@@ -413,7 +381,6 @@ if uploaded:
     else:
         st.caption("Gemini 비활성화 상태입니다. Secrets에 GEMINI_API_KEY를 설정하면 리포트가 생성됩니다.")
 
-    # ---------- Gemini Q&A ----------
     st.markdown("---")
     st.subheader("💬 AI 챗봇")
     if use_gemini:
@@ -427,8 +394,6 @@ if uploaded:
             reply = gemini_send(st.session_state.get("gemini_chat"), user_q)
             st.session_state["chat_ui"].append(("assistant", reply))
             st.chat_message("assistant").write(reply)
-    else:
-        st.caption("Gemini를 활성화하면 이 영역에서 대화할 수 있습니다.")
 else:
     st.info("PAIR 이미지를 업로드하면 자동 분석을 시작합니다.")
 
