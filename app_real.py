@@ -293,7 +293,7 @@ if uploaded:
         st.info("요약 보고서를 불러오지 못했습니다.")
 
     st.markdown("---")
-    st.subheader("💬 AI 챗봇에게 추가 질문하기")
+    st.subheader("🤖 AI 챗봇에게 추가 질문하기")
     for role, text in st.session_state.get("chat_ui", []):
         (st.chat_message("user") if role=="user" else st.chat_message("assistant")).write(text)
 
@@ -306,5 +306,6 @@ if uploaded:
         st.chat_message("assistant").write(reply)
 
 else:
-    st.info("PAIR 이미지를 업로드하면 자동 분석을 시작합니다.")
+    st.info("촬영한 이미지를 업로드하면 자동 분석을 시작합니다.")
+
 
