@@ -33,6 +33,9 @@ COLOR_ROI  = (255, 0, 255)    # 분홍(마젠타)
 COLOR_TEXT = (255, 255, 255)  # 흰색
 
 # --------------- 유틸 ---------------
+def fmt_num(x, fmt="{:.2f}"):
+    return fmt.format(x) if (x is not None and np.isfinite(x)) else "N/A"
+
 def to_xyxy(b):
     return [int(float(b[0])), int(float(b[1])), int(float(b[2])), int(float(b[3]))]
 
@@ -49,7 +52,7 @@ def safe_crop(img, xyxy):
         return None
     x1, y1, x2, y2 = [int(v) for v in xyxy]
     H, W = img.shape[:2]
-    x1 = max(0, x1); y1 = max(0, y1); x2 = min(W-1, x2); y2 = min(H-1, y2)
+    x1 = max(0, x1); y1 = max(0, y1); x2 = min(W - 1, x2); y2 = min(H - 1, y2)
     if x2 <= x1 or y2 <= y1:
         return None
     return img[y1:y2, x1:x2]
@@ -89,21 +92,33 @@ def _ensure_uint8_3ch(img):
     if img.ndim != 3 or img.shape[2] != 3:
         return None
     if img.dtype != np.uint8:
-        # float/uint16 등 → 0~255로 클립 후 uint8
         img = np.clip(img, 0, 255).astype(np.uint8)
     if not img.flags['C_CONTIGUOUS']:
         img = np.ascontiguousarray(img)
     return img
 
 def _bgr_to_rgb_safe(img_bgr):
-    """BGR → RGB 변환을 안전하게 시도. 실패시 채널 뒤집기로 대체."""
+    """BGR → RGB 변환을 안전하게 시도. (연속 메모리 보장)"""
     try:
-        return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        out = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        return np.ascontiguousarray(out)
     except Exception:
         try:
-            return img_bgr[:, :, ::-1]
+            out = img_bgr[:, :, ::-1].copy()  # copy()로 연속 메모리 확보(음수 stride 제거)
+            return np.ascontiguousarray(out)
         except Exception:
             return None
+
+def _maybe_downscale(img, max_dim=2200):
+    """너무 큰 이미지면 표시용으로 다운스케일"""
+    h, w = img.shape[:2]
+    m = max(h, w)
+    if m <= max_dim:
+        return img
+    scale = max_dim / float(m)
+    nh, nw = int(round(h * scale)), int(round(w * scale))
+    out = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
+    return np.ascontiguousarray(out)
 
 def show_bgr_image_safe(img_bgr, caption: str):
     """Streamlit에 안전하게 이미지 표시 (RGB 변환 후 표시)"""
@@ -111,12 +126,15 @@ def show_bgr_image_safe(img_bgr, caption: str):
     if img_bgr is None:
         st.error("시각화 버퍼가 손상되었거나 형식이 올바르지 않습니다.")
         return
-    # 일부 Streamlit/NumPy 조합에서 channels="BGR"이 TypeError를 내는 케이스가 있어 RGB로 변환 후 표시.
+    img_bgr = _maybe_downscale(img_bgr, max_dim=2200)
     img_rgb = _bgr_to_rgb_safe(img_bgr)
-    if img_rgb is None:
-        st.error("이미지 색공간 변환에 실패했습니다.")
+    if img_rgb is None or img_rgb.ndim != 3 or img_rgb.shape[2] != 3 or img_rgb.dtype != np.uint8:
+        st.error("이미지 색공간 변환/형식 정규화에 실패했습니다.")
         return
-    st.image(img_rgb, caption=caption, use_container_width=True)
+    try:
+        st.image(img_rgb, caption=caption, use_container_width=True)
+    except Exception as e:
+        st.error(f"이미지 표시 중 오류: {e}")
 
 # --------------- 탐지 (YOLOv8 + G·p95 유지) ---------------
 def detect_pair_and_measure(img_bgr, model):
@@ -201,7 +219,7 @@ def overlay_visual(img_bgr, viz_items):
     for rb, rcf in viz_items.get("rois", []):
         show = (rcf >= CONF_MIN)
         draw_box(canvas, rb, COLOR_ROI, label=f"CONF {rcf:.2f}", show=show)
-    return canvas
+    return np.ascontiguousarray(canvas)
 
 # ---------------- Gemini ----------------
 def _gemini_debug_panel():
@@ -350,9 +368,9 @@ if uploaded:
     # ---------- 결과 요약 ----------
     st.subheader("🩺 진단 결과 요약")
     colA, colB, colC = st.columns(3)
-    with colA: st.metric("상단 평균 밝기(G·p95)", f"{Iu:.2f}" if np.isfinite(Iu) else "N/A")
-    with colB: st.metric("하단 평균 밝기(G·p95)", f"{Il:.2f}" if np.isfinite(Il) else "N/A")
-    with colC: st.metric("비율 Il/Iu", f"{ratio:.3f}" if np.isfinite(ratio) else "N/A", delta=f"임계 {RATIO_THR}")
+    with colA: st.metric("상단 평균 밝기(G·p95)", fmt_num(Iu))
+    with colB: st.metric("하단 평균 밝기(G·p95)", fmt_num(Il))
+    with colC: st.metric("비율 Il/Iu", fmt_num(ratio, "{:.3f}"), delta=f"임계 {RATIO_THR}")
 
     if np.isfinite(ratio):
         if is_pos: st.error("조합 판정: **POSITIVE** (양성 가능성 있음)")
@@ -367,9 +385,7 @@ if uploaded:
     # ---------- Gemini 컨텍스트 ----------
     context_str = (
         f"[임질 간이 판독]\n"
-        f"- 상단 Iu={Iu:.2f if np.isfinite(Iu) else 'N/A'}, "
-        f"하단 Il={Il:.2f if np.isfinite(Il) else 'N/A'}, "
-        f"ratio={ratio:.3f if np.isfinite(ratio) else 'N/A'}\n"
+        f"- 상단 Iu={fmt_num(Iu)}, 하단 Il={fmt_num(Il)}, ratio={fmt_num(ratio, '{:.3f}')}\n"
         f"- 판정={'양성' if is_pos else '음성' if np.isfinite(ratio) else '불가'}\n"
         + (f"- 메모: {'; '.join(notes)}" if notes else "- 메모: 특이사항 없음")
     )
@@ -415,6 +431,5 @@ if uploaded:
         st.caption("Gemini를 활성화하면 이 영역에서 대화할 수 있습니다.")
 else:
     st.info("PAIR 이미지를 업로드하면 자동 분석을 시작합니다.")
-
 
 
