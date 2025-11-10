@@ -12,7 +12,7 @@ except Exception:
     raise
 
 # --------------- 고정 파라미터 ---------------
-MODEL_PATH_DEFAULT = r"models\new_weights.pt"
+MODEL_PATH_DEFAULT = "models/new_weights.pt"
 CONF_MIN = 0.70
 IOU = 0.50
 IMG_SIZE = 640
@@ -321,3 +321,4 @@ if uploaded:
         st.chat_message("assistant").write(reply)
 else:
     st.info("PAIR 이미지를 업로드하면 자동 분석을 시작합니다.")
+
