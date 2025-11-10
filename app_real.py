@@ -13,7 +13,7 @@ except Exception:
     st.stop()
 
 # --------------- 고정 파라미터 ---------------
-# ⚠️ 리눅스/클라우드 호환: 슬래시(/) 사용
+# 리눅스/클라우드 호환: 슬래시(/)
 MODEL_PATH_DEFAULT = "models/new_weights.pt"
 
 CONF_MIN = 0.70
@@ -79,13 +79,51 @@ def draw_box(img, xyxy, color, label=None, show=True):
     if label:
         draw_label(img, label, x1, y1, color)
 
+# ---------- 표시용 안전 함수 ----------
+def _ensure_uint8_3ch(img):
+    """ndarray 이미지를 uint8 3채널 C_CONTIGUOUS로 강제"""
+    if img is None or not isinstance(img, np.ndarray):
+        return None
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    if img.ndim != 3 or img.shape[2] != 3:
+        return None
+    if img.dtype != np.uint8:
+        # float/uint16 등 → 0~255로 클립 후 uint8
+        img = np.clip(img, 0, 255).astype(np.uint8)
+    if not img.flags['C_CONTIGUOUS']:
+        img = np.ascontiguousarray(img)
+    return img
+
+def _bgr_to_rgb_safe(img_bgr):
+    """BGR → RGB 변환을 안전하게 시도. 실패시 채널 뒤집기로 대체."""
+    try:
+        return cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    except Exception:
+        try:
+            return img_bgr[:, :, ::-1]
+        except Exception:
+            return None
+
+def show_bgr_image_safe(img_bgr, caption: str):
+    """Streamlit에 안전하게 이미지 표시 (RGB 변환 후 표시)"""
+    img_bgr = _ensure_uint8_3ch(img_bgr)
+    if img_bgr is None:
+        st.error("시각화 버퍼가 손상되었거나 형식이 올바르지 않습니다.")
+        return
+    # 일부 Streamlit/NumPy 조합에서 channels="BGR"이 TypeError를 내는 케이스가 있어 RGB로 변환 후 표시.
+    img_rgb = _bgr_to_rgb_safe(img_bgr)
+    if img_rgb is None:
+        st.error("이미지 색공간 변환에 실패했습니다.")
+        return
+    st.image(img_rgb, caption=caption, use_container_width=True)
+
 # --------------- 탐지 (YOLOv8 + G·p95 유지) ---------------
 def detect_pair_and_measure(img_bgr, model):
     """pair 이미지에서 tube/roi 검출 → 위/아래 ROI G·p95 측정 → Il/Iu 비율/판정"""
     r = model.predict(source=img_bgr, imgsz=IMG_SIZE, conf=CONF_MIN, iou=IOU, verbose=False)[0]
     names = r.names
     inv = {v: k for k, v in names.items()} if isinstance(names, dict) else {v: k for k, v in enumerate(names)}
-
     if "tube" not in inv or "roi" not in inv:
         raise RuntimeError(f"모델 클래스에 'tube' 또는 'roi'가 없습니다. names={names}")
 
@@ -97,7 +135,7 @@ def detect_pair_and_measure(img_bgr, model):
     confs = r.boxes.conf.cpu().numpy() if hasattr(r.boxes, "conf") else np.zeros((0,), dtype=float)
 
     tubes, tubes_conf = [], []
-    rois, rois_conf = [], []
+    rois,  rois_conf  = [], []
     for b, c, cf in zip(boxes, clses, confs):
         if c == tube_id:
             tubes.append(to_xyxy(b)); tubes_conf.append(float(cf))
@@ -153,7 +191,8 @@ def detect_pair_and_measure(img_bgr, model):
 
 def overlay_visual(img_bgr, viz_items):
     """검출 결과 시각화 — 박스/라벨 오버레이"""
-    if img_bgr is None or not isinstance(img_bgr, np.ndarray) or img_bgr.ndim != 3:
+    img_bgr = _ensure_uint8_3ch(img_bgr)
+    if img_bgr is None:
         return None
     canvas = img_bgr.copy()
     for tb, tcf in viz_items.get("tubes", []):
@@ -300,15 +339,12 @@ if uploaded:
 
     # ---------- 시각화 ----------
     viz = overlay_visual(img_bgr, viz_items)
-    if viz is None or not isinstance(viz, np.ndarray) or viz.ndim != 3:
+    if viz is None:
         st.warning("시각화 이미지를 생성하지 못했습니다. 검출 결과가 부족할 수 있습니다.")
     else:
-        # ⚠️ Cloud 안정성: 색 변환 없이 BGR 그대로 표시
-        st.image(
+        show_bgr_image_safe(
             viz,
-            channels="BGR",
-            caption="검출 결과(굵은 박스 + CONF 라벨 / conf<0.70는 선 숨김)",
-            use_container_width=True
+            caption="검출 결과(굵은 박스 + CONF 라벨 / conf<0.70는 선 숨김)"
         )
 
     # ---------- 결과 요약 ----------
@@ -379,5 +415,6 @@ if uploaded:
         st.caption("Gemini를 활성화하면 이 영역에서 대화할 수 있습니다.")
 else:
     st.info("PAIR 이미지를 업로드하면 자동 분석을 시작합니다.")
+
 
 
