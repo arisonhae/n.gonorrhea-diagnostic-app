@@ -1,4 +1,3 @@
-# app_real.py
 import hashlib
 import numpy as np
 import cv2
@@ -10,29 +9,31 @@ try:
     from ultralytics import YOLO
 except Exception:
     st.error("ultralytics가 필요합니다. `pip install ultralytics` 후 다시 실행하세요.")
-    st.stop()
+    raise
 
 # --------------- 고정 파라미터 ---------------
+# Windows/리눅스 모두 호환되도록 슬래시 사용
 MODEL_PATH_DEFAULT = "models/new_weights.pt"
 CONF_MIN = 0.70
 IOU = 0.50
 IMG_SIZE = 640
-RATIO_THR = 1.148
-ABS_NEG_CUTOFF = 221.0
 
+# 임계 설정 (사용자 고정값)
+RATIO_THR = 1.148       # Il/Iu 임계
+ABS_NEG_CUTOFF = 221.0  # 상단(음성튜브) 절대 밝기 컷오프
+
+# 렌더링 옵션
 BOX_THICK = 4
 FONT_SCALE = 1.15
 FONT_THICK = 3
 LABEL_ALPHA = 0.65
 
+# 색상 (BGR)
 COLOR_TUBE = (0, 255, 0)
 COLOR_ROI  = (255, 0, 255)
 COLOR_TEXT = (255, 255, 255)
 
 # --------------- 유틸 ---------------
-def fmt_num(x, fmt="{:.2f}"):
-    return fmt.format(x) if (x is not None and np.isfinite(x)) else "N/A"
-
 def to_xyxy(b):
     return [int(float(b[0])), int(float(b[1])), int(float(b[2])), int(float(b[3]))]
 
@@ -47,17 +48,16 @@ def inside(inner, outer):
 def safe_crop(img, xyxy):
     if img is None or xyxy is None:
         return None
-    x1, y1, x2, y2 = [int(v) for v in xyxy]
-    H, W = img.shape[:2]
-    x1 = max(0, x1); y1 = max(0, y1); x2 = min(W - 1, x2); y2 = min(H - 1, y2)
-    if x2 <= x1 or y2 <= y1:
-        return None
+    x1,y1,x2,y2 = [int(v) for v in xyxy]
+    H,W = img.shape[:2]
+    x1=max(0,x1); y1=max(0,y1); x2=min(W-1,x2); y2=min(H-1,y2)
+    if x2<=x1 or y2<=y1: return None
     return img[y1:y2, x1:x2]
 
 def g_p95(crop_bgr):
     if crop_bgr is None:
         return np.nan
-    G = crop_bgr[:, :, 1].astype(np.float32)
+    G = crop_bgr[:,:,1].astype(np.float32)
     return float(np.percentile(G, 95.0))
 
 def draw_label(img, text, x, y, color):
@@ -67,79 +67,36 @@ def draw_label(img, text, x, y, color):
     overlay = img.copy()
     cv2.rectangle(overlay, (bg_x1, bg_y1), (bg_x2, bg_y2), (0, 0, 0), -1)
     cv2.addWeighted(overlay, LABEL_ALPHA, img, 1 - LABEL_ALPHA, 0, img)
-    cv2.putText(img, text, (x + 6, y - 6), cv2.FONT_HERSHEY_SIMPLEX, FONT_SCALE, (0, 0, 0), FONT_THICK + 2, cv2.LINE_AA)
+    cv2.putText(img, text, (x + 6, y - 6), cv2.FONT_HERSHEY_SIMPLEX, FONT_SCALE, (0,0,0), FONT_THICK+2, cv2.LINE_AA)
     cv2.putText(img, text, (x + 6, y - 6), cv2.FONT_HERSHEY_SIMPLEX, FONT_SCALE, COLOR_TEXT, FONT_THICK, cv2.LINE_AA)
 
 def draw_box(img, xyxy, color, label=None, show=True):
-    x1, y1, x2, y2 = [int(v) for v in xyxy]
+    x1,y1,x2,y2 = [int(v) for v in xyxy]
     if show:
-        cv2.rectangle(img, (x1, y1), (x2, y2), color, BOX_THICK)
+        cv2.rectangle(img, (x1,y1), (x2,y2), color, BOX_THICK)
     if label:
         draw_label(img, label, x1, y1, color)
 
-# ---------- 표시용 안전 함수 ----------
-def _ensure_uint8_3ch(img):
-    if img is None or not isinstance(img, np.ndarray):
-        return None
-    if img.ndim == 2:
-        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
-    if img.ndim != 3 or img.shape[2] != 3:
-        return None
-    if img.dtype != np.uint8:
-        img = np.clip(img, 0, 255).astype(np.uint8)
-    if not img.flags['C_CONTIGUOUS']:
-        img = np.ascontiguousarray(img)
-    return img
-
-def _bgr_to_rgb_safe(img_bgr):
+def show_bgr_image_safe(img_bgr, caption=None):
+    """Cloud에서 use_container_width 미지원 버전도 안전하게 동작하도록 표시."""
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     try:
-        out = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-        return np.ascontiguousarray(out)
-    except Exception:
-        try:
-            out = img_bgr[:, :, ::-1].copy()
-            return np.ascontiguousarray(out)
-        except Exception:
-            return None
+        st.image(img_rgb, caption=caption, use_container_width=True)
+    except TypeError:
+        st.image(img_rgb, caption=caption)
 
-def _maybe_downscale(img, max_dim=2200):
-    h, w = img.shape[:2]
-    m = max(h, w)
-    if m <= max_dim:
-        return img
-    scale = max_dim / float(m)
-    nh, nw = int(round(h * scale)), int(round(w * scale))
-    out = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA)
-    return np.ascontiguousarray(out)
-
-def show_bgr_image_safe(img_bgr, caption: str):
-    img_bgr = _ensure_uint8_3ch(img_bgr)
-    if img_bgr is None:
-        st.error("시각화 버퍼가 손상되었거나 형식이 올바르지 않습니다.")
-        return
-    img_bgr = _maybe_downscale(img_bgr, max_dim=2200)
-    img_rgb = _bgr_to_rgb_safe(img_bgr)
-    if img_rgb is None or img_rgb.ndim != 3 or img_rgb.shape[2] != 3 or img_rgb.dtype != np.uint8:
-        st.error("이미지 색공간 변환/형식 정규화에 실패했습니다.")
-        return
-    try:
-        # ✅ Streamlit 1.33 호환: use_column_width
-        st.image(img_rgb, caption=caption, use_column_width=True)
-    except Exception as e:
-        st.error(f"이미지 표시 중 오류: {e}")
-
-# --------------- 탐지 (YOLOv8 + G·p95 유지) ---------------
+# --------------- 탐지 (YOLOv8 + G(p95)) ---------------
 def detect_pair_and_measure(img_bgr, model):
     r = model.predict(source=img_bgr, imgsz=IMG_SIZE, conf=CONF_MIN, iou=IOU, verbose=False)[0]
     names = r.names
-    inv = {v: k for k, v in names.items()} if isinstance(names, dict) else {v: k for k, v in enumerate(names)}
+    inv = {v:k for k,v in names.items()}
     if "tube" not in inv or "roi" not in inv:
         raise RuntimeError(f"모델 클래스에 'tube' 또는 'roi'가 없습니다. names={names}")
 
     tube_id = inv["tube"]; roi_id = inv["roi"]
-    boxes = r.boxes.xyxy.cpu().numpy() if hasattr(r.boxes, "xyxy") else np.zeros((0, 4))
-    clses = r.boxes.cls.cpu().numpy().astype(int) if hasattr(r.boxes, "cls") else np.zeros((0,), dtype=int)
-    confs = r.boxes.conf.cpu().numpy() if hasattr(r.boxes, "conf") else np.zeros((0,), dtype=float)
+    boxes = r.boxes.xyxy.cpu().numpy()
+    clses = r.boxes.cls.cpu().numpy().astype(int)
+    confs = r.boxes.conf.cpu().numpy()
 
     tubes, tubes_conf = [], []
     rois,  rois_conf  = [], []
@@ -189,39 +146,21 @@ def detect_pair_and_measure(img_bgr, model):
         upper=upper, lower=lower
     )
 
-    return Iu, Il, ratio, is_positive, notes, viz_items, (tubes, tubes_conf, rois, rois_conf)
+    return Iu, Il, ratio, is_positive, notes, viz_items
 
 def overlay_visual(img_bgr, viz_items):
-    img_bgr = _ensure_uint8_3ch(img_bgr)
-    if img_bgr is None:
-        return None
     canvas = img_bgr.copy()
-    for tb, tcf in viz_items.get("tubes", []):
+    for tb, tcf in viz_items["tubes"]:
         show = (tcf >= CONF_MIN)
         draw_box(canvas, tb, COLOR_TUBE, label=f"CONF {tcf:.2f}", show=show)
-    for rb, rcf in viz_items.get("rois", []):
+    for rb, rcf in viz_items["rois"]:
         show = (rcf >= CONF_MIN)
         draw_box(canvas, rb, COLOR_ROI, label=f"CONF {rcf:.2f}", show=show)
-    return np.ascontiguousarray(canvas)
+    return canvas
 
 # ---------------- Gemini ----------------
-def _gemini_debug_panel():
-    try:
-        import google.generativeai as genai
-        ver = pkg_version("google-generativeai")
-        st.sidebar.caption(f"google-generativeai v{ver}")
-        try:
-            genai.configure(api_key=st.secrets.get("GEMINI_API_KEY", ""))
-            names = [m.name for m in genai.list_models()]
-            short = [n.split("/")[-1] for n in names]
-            if short:
-                st.sidebar.caption("모델 목록: " + ", ".join(short[:12]) + (" ..." if len(short) > 12 else ""))
-        except Exception as e:
-            st.sidebar.caption(f"모델 조회 실패: {e}")
-    except Exception:
-        st.sidebar.caption("google-generativeai 패키지를 찾을 수 없습니다.")
-
 def _gemini_start_chat(context_ko: str):
+    """항상 활성화: 별도 토글/지역 없음."""
     api_key = st.secrets.get("GEMINI_API_KEY", None)
     if not api_key:
         return None
@@ -232,17 +171,17 @@ def _gemini_start_chat(context_ko: str):
         model = genai.GenerativeModel(model_name)
         system_prompt = (
             "역할: 임질(Neisseria gonorrhoeae) 체외진단 앱의 한국어 어시스턴트.\n"
-            "원칙: JSON/표/코드/수식 금지. 필요 시 일반 가이드와 전문 상담 권유 포함.\n"
-            "판정은 ratio(Il/Iu)와 설정 임계값을 기준으로 함.\n\n"
+            "원칙: 자연스럽고 직접적으로 답변.\n"
+            "기준: Il/Iu 비율과 임계값을 핵심 근거로 설명.\n\n"
             f"[현재 측정 요약]\n{context_ko}\n"
         )
         chat = model.start_chat(history=[
             {"role": "user", "parts": system_prompt},
-            {"role": "model", "parts": "측정 요약을 기억했습니다. 이 결과를 기준으로 답변하겠습니다."}
+            {"role": "model", "parts": "측정 요약을 기억했습니다. 바로 질의응답을 시작하겠습니다."}
         ])
         return chat
     except Exception as e:
-        st.warning(f"Gemini 세션 초기화 실패: {e}")
+        st.warning(f"Gemini 초기화 실패: {e}")
         return None
 
 def gemini_summary_via_session(chat):
@@ -250,11 +189,12 @@ def gemini_summary_via_session(chat):
         return None
     try:
         prompt = (
-            "임질(N. gonorrhoeae) 의심 여부 안내용 간단 보고서를 작성하세요.\n"
-            "1) 한두 문장 요약(양성/음성 판정 + 근거)\n"
-            "2) 해석 팁(형광/비율 의미, 재촬영 필요 조건)\n"
-            "3) 행동 가이드(진료 권고, 주의사항)\n"
-            "※ 확정 진단/치료 지시 금지."
+            "다음 내용을 바탕으로 간단한 한국어 보고서를 작성하세요.\n"
+            "스타일: 짧고 담백, 헤딩 1줄 + 핵심 근거 1-2줄 + 다음 단계 1-2줄.\n"
+            "구성 예시:\n"
+            "◉ AI 기반 최종 분석 보고서\n"
+            "- 판정: [양성/음성] (근거: Il/Iu = X, 임계=Y)\n"
+            "- 다음 단계: 재촬영/내원 권고 등 핵심 한두 줄\n"
         )
         resp = chat.send_message(prompt)
         return getattr(resp, "text", None)
@@ -265,21 +205,9 @@ def gemini_send(chat, user_msg: str):
     if chat is None:
         return "(Gemini 비활성화)"
     try:
-        allow = st.session_state.get("allow_reco", False)
-        region = st.session_state.get("user_region", "").strip()
-        if allow:
-            policy = (
-                "요청 시 인근 병원/의료기관 이름을 예시로 제안해도 됩니다. "
-                "정확한 최신 정보는 사용자가 직접 확인해야 함을 고지하세요. "
-                + (f"가능하면 '{region}' 근처를 고려하세요. " if region else "")
-            )
-        else:
-            policy = "특정 병원/의료기관 추천은 피하고, 진료과/절차 위주로 안내하세요."
         prompt = (
-            "너는 임질 체외진단 앱의 한국어 어시스턴트다. "
-            "현재 세션에 저장된 측정 결과를 바탕으로 답한다. "
-            "JSON/표/코드 출력 금지. 간결하고 실용적으로.\n\n"
-            f"[정책]\n{policy}\n\n[사용자 질문]\n{user_msg}\n"
+            "자연스럽게 한국어로 답하세요. 위의 검사 결과를 참고하여 상황에 맞게 대답하세요."
+            f"\n\n[사용자 질문]\n{user_msg}\n"
         )
         resp = chat.send_message(prompt)
         return getattr(resp, "text", None) or "(빈 응답)"
@@ -288,7 +216,7 @@ def gemini_send(chat, user_msg: str):
 
 # ================= Streamlit UI =================
 st.set_page_config(page_title="스마트폰 기반 임질 진단 시스템", layout="wide")
-st.title("스마트폰 기반 임질 진단 시스템 (PAIR 전용)")
+st.title("스마트폰 기반 임질 진단 시스템")
 
 with st.sidebar:
     st.subheader("설정 (고정값)")
@@ -297,26 +225,19 @@ with st.sidebar:
     st.write(f"CONF_MIN = **{CONF_MIN:.2f}**, IOU = {IOU}, IMG_SIZE = {IMG_SIZE}")
     st.write(f"ratio 임계 = **{RATIO_THR}**, ABS_NEG_CUTOFF = **{ABS_NEG_CUTOFF}**")
 
-    use_gemini = True
-    allow_reco = st.toggle("병원/의료기관 '예시' 추천 허용", value=False)
-    user_region = st.text_input("지역(선택)", value="", placeholder="예: 분당, 판교, 서현동")
-    st.session_state["allow_reco"] = allow_reco
-    st.session_state["user_region"] = user_region
+    # 패키지 버전만 참고용으로 표기 (불필요한 문구 제거)
+    try:
+        ver = pkg_version("google-generativeai")
+        st.caption(f"google-generativeai v{ver}")
+    except Exception:
+        pass
 
-    st.markdown("---")
-    _gemini_debug_panel()
-
-uploaded = st.file_uploader("PAIR 이미지를 업로드하세요 (jpg/png)", type=["jpg", "jpeg", "png"])
+uploaded = st.file_uploader("기준 샘플(위)와 테스트 샘플(아래)가 함께 보이도록 촬영한 이미지를 업로드하세요. (jpg/png)", type=["jpg","jpeg","png"])
 
 if uploaded:
     file_bytes = uploaded.read()
     file_bytes_np = np.frombuffer(file_bytes, np.uint8)
     img_bgr = cv2.imdecode(file_bytes_np, cv2.IMREAD_COLOR)
-
-    if img_bgr is None or not isinstance(img_bgr, np.ndarray) or img_bgr.ndim != 3:
-        st.error("이미지 디코딩에 실패했습니다. JPG/PNG 파일인지 확인해 주세요.")
-        st.stop()
-
     img_hash = hashlib.sha1(file_bytes).hexdigest()
 
     try:
@@ -325,76 +246,65 @@ if uploaded:
         st.error(f"YOLO 가중치를 불러오지 못했습니다: {e}")
         st.stop()
 
-    try:
-        Iu, Il, ratio, is_pos, notes, viz_items, raw_lists = detect_pair_and_measure(img_bgr, model)
-    except Exception as e:
-        st.error(f"검출/측정 중 오류: {e}")
-        st.stop()
-
+    Iu, Il, ratio, is_pos, notes, viz_items = detect_pair_and_measure(img_bgr, model)
     viz = overlay_visual(img_bgr, viz_items)
-    if viz is None:
-        st.warning("시각화 이미지를 생성하지 못했습니다. 검출 결과가 부족할 수 있습니다.")
-    else:
-        show_bgr_image_safe(viz, caption="검출 결과(굵은 박스 + CONF 라벨 / conf<0.70는 선 숨김)")
+    show_bgr_image_safe(viz, caption="검출 결과 (CONF<0.70 선 숨김)")
 
     st.subheader("🩺 진단 결과 요약")
     colA, colB, colC = st.columns(3)
-    with colA: st.metric("상단 평균 밝기(G·p95)", fmt_num(Iu))
-    with colB: st.metric("하단 평균 밝기(G·p95)", fmt_num(Il))
-    with colC: st.metric("비율 Il/Iu", fmt_num(ratio, "{:.3f}"), delta=f"임계 {RATIO_THR}")
+    with colA: st.metric("상단 평균 밝기(G·p95)", f"{Iu:.2f}")
+    with colB: st.metric("하단 평균 밝기(G·p95)", f"{Il:.2f}")
+    with colC:
+        delta_txt = f"임계 {RATIO_THR}"
+        st.metric("비율 Il/Iu", f"{ratio:.3f}" if np.isfinite(ratio) else "N/A", delta=delta_txt)
 
     if np.isfinite(ratio):
         if is_pos: st.error("조합 판정: **POSITIVE** (양성 가능성 있음)")
         else:      st.success("조합 판정: **NEGATIVE** (음성 가능성 높음)")
     else:
-        st.warning("조합 판정 불가: ratio 계산 실패(검출 갯수/품질 확인 필요)")
+        st.warning("조합 판정 불가")
 
-    if notes:
-        for n in notes:
-            st.warning("• " + n)
+    for n in notes:
+        st.warning("• " + n)
 
+    # 세션 컨텍스트 작성
+    judge = '양성' if is_pos else ('음성' if np.isfinite(ratio) else '불가')
     context_str = (
-        f"[임질 간이 판독]\n"
-        f"- 상단 Iu={fmt_num(Iu)}, 하단 Il={fmt_num(Il)}, ratio={fmt_num(ratio, '{:.3f}')}\n"
-        f"- 판정={'양성' if is_pos else '음성' if np.isfinite(ratio) else '불가'}\n"
-        + (f"- 메모: {'; '.join(notes)}" if notes else "- 메모: 특이사항 없음")
+        f"- 상단 Iu={Iu:.2f}, 하단 Il={Il:.2f}, ratio={ratio:.3f if np.isfinite(ratio) else float('nan')}\n"
+        f"- 판정={judge} (임계={RATIO_THR})"
     )
 
+    # 새 이미지면 새 세션
+    if st.session_state.get("last_img_hash") != img_hash:
+        st.session_state["last_img_hash"] = img_hash
+        st.session_state["gemini_chat"] = _gemini_start_chat(context_str)
+        st.session_state["chat_ui"] = []
+        st.session_state["gemini_summary"] = None
+
+    # 보고서 생성
+    if st.session_state["gemini_summary"] is None:
+        st.session_state["gemini_summary"] = gemini_summary_via_session(st.session_state.get("gemini_chat"))
+
     st.markdown("---")
-    st.subheader("🧠 AI 분석 보고서")
-
-    if use_gemini:
-        if st.session_state.get("last_img_hash") != img_hash:
-            st.session_state["last_img_hash"] = img_hash
-            st.session_state["gemini_chat"] = _gemini_start_chat(context_str)
-            st.session_state["chat_ui"] = []
-            st.session_state["gemini_summary"] = None
-
-        if st.session_state["gemini_summary"] is None:
-            st.session_state["gemini_summary"] = gemini_summary_via_session(st.session_state.get("gemini_chat"))
-
-        if st.session_state["gemini_summary"]:
-            st.markdown(st.session_state["gemini_summary"])
-            st.caption(f"Powered by Gemini · {st.session_state.get('gemini_model','?')}")
-        else:
-            st.info("Gemini 리포트를 생성하지 않았습니다.")
+    st.subheader("◉ AI 기반 최종 분석 보고서")
+    if st.session_state["gemini_summary"]:
+        st.markdown(st.session_state["gemini_summary"])
     else:
-        st.caption("Gemini 비활성화 상태입니다. Secrets에 GEMINI_API_KEY를 설정하면 리포트가 생성됩니다.")
+        st.info("요약 보고서를 불러오지 못했습니다.")
 
     st.markdown("---")
-    st.subheader("💬 AI 챗봇")
-    if use_gemini:
-        for role, text in st.session_state.get("chat_ui", []):
-            (st.chat_message("user") if role == "user" else st.chat_message("assistant")).write(text)
+    st.subheader("💬 AI 챗봇에게 추가 질문하기")
+    for role, text in st.session_state.get("chat_ui", []):
+        (st.chat_message("user") if role=="user" else st.chat_message("assistant")).write(text)
 
-        user_q = st.chat_input("예: '지금 결과를 설명해줄래?' / '내 위치 근처의 병원을 추천해줄래?'")
-        if user_q:
-            st.session_state["chat_ui"].append(("user", user_q))
-            st.chat_message("user").write(user_q)
-            reply = gemini_send(st.session_state.get("gemini_chat"), user_q)
-            st.session_state["chat_ui"].append(("assistant", reply))
-            st.chat_message("assistant").write(reply)
+    user_q = st.chat_input("예: '지금 결과를 자세히 설명해줘' / '어떤 병원을 가야 해?'")
+    if user_q:
+        st.session_state["chat_ui"].append(("user", user_q))
+        st.chat_message("user").write(user_q)
+        reply = gemini_send(st.session_state.get("gemini_chat"), user_q)
+        st.session_state["chat_ui"].append(("assistant", reply))
+        st.chat_message("assistant").write(reply)
+
 else:
     st.info("PAIR 이미지를 업로드하면 자동 분석을 시작합니다.")
-
 
