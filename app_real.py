@@ -268,11 +268,12 @@ if uploaded:
         st.warning("• " + n)
 
     # 세션 컨텍스트 작성
-    judge = '양성' if is_pos else ('음성' if np.isfinite(ratio) else '불가')
+    ratio_fmt = f"{ratio:.3f}" if np.isfinite(ratio) else "nan"
     context_str = (
-        f"- 상단 Iu={Iu:.2f}, 하단 Il={Il:.2f}, ratio={ratio:.3f if np.isfinite(ratio) else float('nan')}\n"
+        f"- 상단 Iu={Iu:.2f}, 하단 Il={Il:.2f}, ratio={ratio_fmt}\n"
         f"- 판정={judge} (임계={RATIO_THR})"
     )
+
 
     # 새 이미지면 새 세션
     if st.session_state.get("last_img_hash") != img_hash:
@@ -307,6 +308,7 @@ if uploaded:
 
 else:
     st.info("촬영한 이미지를 업로드하면 자동 분석을 시작합니다.")
+
 
 
 
