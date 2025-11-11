@@ -5,15 +5,18 @@
 # - 보고서 단일화 + 오류/주의(행동지시형) 강화
 # - Gemini 대화: 검사결과를 기억하고 답변
 # - Google Custom Search API(CSE) 기반 검색(있으면 사용, 없으면 LLM-only)
+# - 위치/병원 추천: ★ Kakao Local API 사용 (REST API 키 필요)
 # - 하단에 powered by Gemini <model>
 # ------------------------------------------------------------
 
 import hashlib
 import os
+import re
 import numpy as np
 import cv2
 import streamlit as st
 from importlib.metadata import version as pkg_version
+import requests
 
 # ---------------- YOLO ----------------
 try:
@@ -71,13 +74,10 @@ def gemini_generate(chat, prompt: str) -> str:
         return f"(Gemini 응답 실패: {e})"
 
 # ---------------- Google Custom Search (선택) ----------------
-import requests
-
 def cse_available() -> bool:
     return bool(st.secrets.get("GOOGLE_API_KEY")) and bool(st.secrets.get("GOOGLE_CSE_ID"))
 
 def google_cse_search(query: str, num: int = 6) -> list:
-    """CSE가 설정되어 있으면 웹 검색 결과(텍스트)를 반환, 없으면 []."""
     api_key = st.secrets.get("GOOGLE_API_KEY")
     cse_id  = st.secrets.get("GOOGLE_CSE_ID")
     if not (api_key and cse_id):
@@ -101,6 +101,61 @@ def google_cse_search(query: str, num: int = 6) -> list:
         return results
     except Exception:
         return []
+
+# ---------------- Kakao Local (병원/장소 검색) ----------------
+def _kakao_headers():
+    key = st.secrets.get("KAKAO_API_KEY")
+    if not key:
+        return None
+    return {"Authorization": f"KakaoAK {key}"}
+
+def _clean_hospital_query(user_msg: str) -> str:
+    """
+    사용자의 병원 요청 문장에서 불필요 단어를 제거하고
+    '지명 + 진료과' 형태의 키워드를 만들어 준다.
+    """
+    q = user_msg.strip()
+    # 흔한 불용어 제거
+    q = re.sub(r"(추천|근처|가까운|어디|알려줘|찾아줘|검색|병원은|병원좀|병원좀|병원좀요)", " ", q)
+    q = re.sub(r"\s+", " ", q).strip()
+    # 진료과 누락 시 기본값: 산부인과
+    if not re.search(r"(산부인과|비뇨|여성의원|성병|성클리닉)", q):
+        q = q + " 산부인과"
+    return q
+
+def kakao_search_places_markdown(user_msg: str, size: int = 6) -> str:
+    """
+    카카오 Local '키워드 검색'으로 결과를 받아서
+    스트림릿 채팅창에 바로 붙일 수 있는 마크다운 텍스트를 만든다.
+    """
+    headers = _kakao_headers()
+    if headers is None:
+        return "※ 카카오맵 API 키가 설정되지 않았습니다. `KAKAO_API_KEY`를 secrets에 추가하세요."
+    query = _clean_hospital_query(user_msg)
+    try:
+        r = requests.get(
+            "https://dapi.kakao.com/v2/local/search/keyword.json",
+            headers=headers,
+            params={"query": query, "size": size},
+            timeout=8
+        )
+        if not r.ok:
+            return f"카카오맵 검색 오류: {r.status_code} {r.text[:120]}"
+        docs = r.json().get("documents", [])
+        if not docs:
+            return "검색 결과가 없습니다. 지명을 더 구체적으로 입력해 주세요. (예: '분당 산부인과', '야탑역 산부인과')"
+
+        lines = ["**제공해주신 질의로 찾은 병원 목록입니다.**\n"]
+        for d in docs:
+            name = d.get("place_name", "")
+            addr = d.get("road_address_name") or d.get("address_name") or ""
+            phone = d.get("phone") or "전화번호 정보 없음"
+            link  = f"https://map.kakao.com/link/map/{d.get('id')}"
+            lines.append(f"- 🏥 **{name}**  \n  📍 {addr}  \n  📞 {phone}  \n  🔗 지도: {link}")
+        lines.append("\n> 참고: 결과는 최신 정보와 차이가 있을 수 있으니, 방문 전 병원에 직접 문의해 주세요.")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"카카오맵 검색 실패: {e}"
 
 # --------------- 고정 파라미터(변경 금지 영역) ---------------
 MODEL_PATH_DEFAULT = "models/new_weights.pt"
@@ -170,7 +225,7 @@ def draw_box(img, xyxy, color, label=None, show=True):
 def show_bgr_image_safe(img_bgr, caption=None):
     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     try:
-        st.image(img_rgb, caption=caption, width=400)
+        st.image(img_rgb, caption=caption, width=400)  # 시각화 축소
     except TypeError:
         st.image(img_rgb, caption=caption, width=400)
 
@@ -224,27 +279,27 @@ def detect_pair_and_measure(img_bgr, model):
     # (A) tube 미검출 또는 신뢰도 낮음 → 초점/빛반사
     if len(tubes) == 0 or all(cf < CONF_MIN for cf in tubes_conf):
         notes.append(
-            "tube 미검출(또는 신뢰도 낮음): 초점이 맞지 않았거나 강한 빛반사가 있을 수 있습니다. "
-            "해결: 카메라를 10–15cm 거리에서 정면에 가깝게 두고, 렌즈를 닦은 뒤 "
-            "상부 조명을 비껴가도록 각도를 약간 조정해 재촬영하세요."
+            "튜브가 잡히지 않았습니다(또는 검출 신뢰도가 낮음). 카메라 초점/빛반사 가능성이 큽니다. "
+            "해결: 카메라를 10–15cm 거리에서 정면에 가깝게 두고 렌즈를 닦은 뒤, "
+            "상부 조명이 비치지 않도록 각도를 약간 조정해 재촬영하세요."
         )
     # (B) ROI 한쪽/없음 → splash
     if (upper is None or lower is None):
         notes.append(
-            "ROI 미검출(또는 1개만 검출): 샘플 용액이 흩어진(splash) 상황일 수 있습니다. "
-            "해결: 튜브를 수직으로 세우고 바닥을 2–3회 가볍게 톡톡 쳐서 용액이 바닥으로 모이게 한 뒤, "
+            "측정부위(표면 영역)가 하나만 잡히거나 아예 잡히지 않습니다. 내부 용액이 흩어진(splash) 상태일 수 있습니다. "
+            "해결: 튜브를 수직으로 세우고 바닥을 2–3회 가볍게 톡톡 쳐서 용액을 바닥으로 모은 후, "
             "거품/흔들림이 가라앉으면 재촬영하세요."
         )
     # (C) NC 밝기 과다
     if np.isfinite(Iu) and Iu >= ABS_NEG_CUTOFF:
         notes.append(
-            "상단(기준) 튜브 밝기가 비정상적으로 높습니다. "
-            "해결: 상단에는 반드시 NC(음성 대조)를 사용하고, 반사광이 강하면 각도를 조정해 재촬영하세요."
+            "상단(기준) 튜브 밝기가 비정상적으로 높습니다. 상단에는 반드시 음성 대조(NC)를 올려 주세요. "
+            "반사광이 강하면 각도를 조정해 재촬영하세요."
         )
     # (D) 비율 계산 불가
     if not np.isfinite(ratio):
         notes.append(
-            "비율(Il/Iu) 계산 불가: 두 ROI가 모두 안정적으로 검출되어야 합니다. "
+            "비율(Il/Iu) 계산이 불가합니다. 두 영역이 모두 안정적으로 잡혀야 합니다. "
             "위 안내대로 재촬영 후 다시 시도하세요."
         )
 
@@ -271,44 +326,57 @@ def overlay_visual(img_bgr, viz_items):
 def make_report_prompt(Iu, Il, ratio, thr, is_pos, notes):
     ratio_txt = f"{ratio:.3f}" if np.isfinite(ratio) else "계산불가"
     judge = '양성' if is_pos else ('음성' if np.isfinite(ratio) else '판정불가')
-    # 단일 보고서(한 번만 노출) + 설명/오류/다음단계/면책
+    # ★ 검출/측정 방식 설명을 '일반어'로 명확히 추가
     return (
         "다음 데이터를 바탕으로 환자용 한국어 요약 보고서를 작성하세요.\n"
         "스타일: 제목 1줄 + 간단 근거 + 오류/주의(해결 포함) + 다음 단계 + 면책.\n"
         f"- 상단 밝기 Iu={Iu:.2f}, 하단 밝기 Il={Il:.2f}, 비율 Il/Iu={ratio_txt}, 임계={thr:.3f}\n"
         f"- 판정: {judge}\n"
         f"- 참고 노트: {notes}\n\n"
+        "추가 요구사항(일반인 표현):\n"
+        "• 카메라가 자동으로 '시험관(튜브) 모양'과 '표면에서 빛을 읽을 위치'를 찾고, "
+        "신뢰도가 충분한(대략 0.7 이상으로 확실히 맞다고 판단된) 것만 사용했다고 설명하세요. "
+        "전문어(confidence, ROI)는 쓰지 말고 '확실히 맞다고 판단된 항목' 같은 쉬운 표현으로 바꾸세요.\n"
+        "• 형광값은 '초록색 밝기 중에서 가장 밝은 상위 5% 영역의 평균'을 대표값으로 썼다고 설명하세요. "
+        "이를 'G_95'라고 부르지만 보고서에서는 '초록색 상위 5% 밝기' 같은 쉬운 표현을 사용하세요.\n"
+        "• 위아래 두 영역의 값을 비교하여 '하단/상단( Il/Iu ) 비율'이 임계값보다 크면 양성으로 판단한다고 "
+        "한 문단으로 이해하기 쉽게 설명하세요.\n\n"
         "구성:\n"
         "1) 한줄 요약: 양성/음성과 간단 근거(Il/Iu와 임계 비교)\n"
-        "2) 결과 해석(일반어): Iu/Il/Il·Iu 비율이 무엇인지와 이번 숫자의 의미\n"
-        "3) 오류/주의 및 해결: 위 노트를 불릿 목록으로, 각 항목에 바로 실행 가능한 해결 방법 포함\n"
-        "4) 다음 단계: 증상/성접촉력 고려 진료(산부인과/비뇨의학과), 재촬영 조건, 빠른 내원 기준\n"
-        "5) 면책: 본 결과는 참고용 보조 도구이며 확진·치료 지시는 의료진 판단이 필요함\n"
+        "2) 결과 해석(일반어): Iu/Il/Il·Iu 비율 의미, 이번 숫자의 의미\n"
+        "3) 검출·측정 방식: 위의 쉬운 표현 규칙대로 설명(신뢰도 0.7 이상만 사용, 초록색 상위 5% 밝기)\n"
+        "4) 오류/주의 및 해결: 위 노트를 불릿 목록으로, 각 항목에 바로 실행 가능한 해결 방법 포함\n"
+        "5) 다음 단계: 증상/성접촉력 고려 진료(산부인과/비뇨의학과), 재촬영 조건, 빠른 내원 기준\n"
+        "6) 면책: 본 결과는 참고용 보조 도구이며 확진·치료 지시는 의료진 판단이 필요함\n"
     )
 
 def gemini_answer(chat, user_msg: str, location_hint: str | None = None) -> str:
-    """LLM-only 기본. CSE가 있으면 검색결과를 요약해 안내."""
-    # 병원/의학 최신 정보 질의면 CSE 먼저
-    use_cse = cse_available()
+    """
+    일반 질문은 Gemini. 병원/위치 질문은 Kakao Local로 직접 검색.
+    의학 최신정보 질문 + CSE 설정 시 → CSE 결과 요약 후 응답.
+    """
+    # 1) 병원/위치 질의 → Kakao 우선
     wants_hospital = any(k in user_msg for k in ["병원", "산부인과", "비뇨", "여성의원", "클리닉"])
-    wants_med_news = any(k in user_msg for k in ["최신", "가이드라인", "치료법", "내성", "논문", "뉴스"])
+    wants_near = any(k in user_msg for k in ["근처", "가까운", "주변", "near"])
+    if wants_hospital:
+        return kakao_search_places_markdown(user_msg)
 
-    if use_cse and (wants_hospital or wants_med_news):
-        q = user_msg
-        sr = google_cse_search(q, num=6)
+    # 2) 의학 최신정보 → CSE 사용
+    use_cse = cse_available()
+    wants_med_news = any(k in user_msg for k in ["최신", "가이드라인", "치료법", "내성", "논문", "뉴스"])
+    if use_cse and wants_med_news:
+        sr = google_cse_search(user_msg, num=6)
         if sr:
             summary = "\n".join(f"- {i+1}. {r['title']} — {r['snippet']} ({r['link']})" for i, r in enumerate(sr))
             prompt = (
                 "아래 웹 검색 결과를 근거로 한국어로 간단하고 실용적인 답변을 작성하세요. "
                 "정확하지 않은 경우 '정보가 최신이 아닐 수 있습니다'를 명시하고, 확진/처방 지시는 금지합니다.\n\n"
                 f"[검색 결과]\n{summary}\n\n"
-                "요청:\n"
-                "- 병원 질의라면 2–5곳을 목록으로 제시(이름/간단 위치/특징). 링크는 1줄로 묶어 제시.\n"
-                "- 의학 최신정보라면 핵심 bullet 3–5개와 주의사항 1–2개.\n"
+                "요청: 의학 최신정보라면 핵심 bullet 3–5개와 주의사항 1–2개."
             )
             return gemini_generate(chat, prompt)
 
-    # CSE 없거나 일반 질문 → LLM-only
+    # 3) 일반 질문 → LLM-only
     hint = f"\n[지명 힌트] {location_hint}\n" if location_hint else ""
     prompt = (
         "자연스럽고 명확한 한국어로 대답하세요. 확진/처방 지시는 금지.\n"
@@ -330,10 +398,9 @@ with st.sidebar:
     st.write(f"ratio 임계 = **{RATIO_THR}**, ABS_NEG_CUTOFF = **{ABS_NEG_CUTOFF}**")
 
     # 버전/키 상태
-    gem_ver = None
     try:
-        gem_ver = pkg_version("google-generativeai")
-        st.caption(f"google-generativeai v{gem_ver}")
+        ver = pkg_version("google-generativeai")
+        st.caption(f"google-generativeai v{ver}")
     except Exception:
         pass
 
@@ -342,7 +409,9 @@ with st.sidebar:
     else:
         st.info("검색 모드: LLM만 (CSE 미설정)")
 
-uploaded = st.file_uploader("기준 샘플(위)와 테스트 샘플(아래)가 함께 보이도록 촬영한 이미지를 업로드하세요. (jpg/png)", type=["jpg","jpeg","png"])
+uploaded = st.file_uploader(
+    "기준 샘플(위)와 테스트 샘플(아래)가 함께 보이도록 촬영한 이미지를 업로드하세요. (jpg/png)",
+    type=["jpg","jpeg","png"])
 
 if uploaded:
     file_bytes = uploaded.read()
@@ -399,8 +468,7 @@ if uploaded:
 
     st.markdown("---")
     st.subheader("💡 AI 기반 최종 분석 보고서")
-    if st.session_state["gemini_report"]:
-        st.markdown(st.session_state["gemini_report"])
+    if st.session_state["gemini_report"]:\n        st.markdown(st.session_state["gemini_report"])
     else:
         st.info("요약 보고서를 불러오지 못했습니다.")
 
@@ -411,7 +479,7 @@ if uploaded:
     for role, text in st.session_state.get("chat_ui", []):
         (st.chat_message("user") if role=="user" else st.chat_message("assistant")).write(text)
 
-    user_q = st.chat_input("예: '(내 위치) 근처의 산부인과를 추천해줘' / '임질 증상이 뭐야?' / '임질 무증상도 있어?' / '검사 후 뭘 해야 해?'")
+    user_q = st.chat_input("예: '분당 산부인과 추천해줘' / '임질 증상이 뭐야?' / '무증상도 있어?' / '검사 후 뭘 해야 해?'")
     if user_q:
         st.session_state["chat_ui"].append(("user", user_q))
         st.chat_message("user").write(user_q)
@@ -422,9 +490,11 @@ if uploaded:
     # Footer: Powered by Gemini
     _, model_name = _get_gemini_model()
     if model_name:
-        st.markdown(f"<div style='text-align:right; opacity:0.7;'>powered by <b>{model_name}</b></div>", unsafe_allow_html=True)
-
+        st.markdown(
+            "<div style='text-align:right; opacity:0.7;'>powered by <b>"
+            + model_name +
+            "</b></div>",
+            unsafe_allow_html=True
+        )
 else:
     st.info("촬영한 이미지를 업로드하면 자동 분석을 시작합니다.")
-
-
