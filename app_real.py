@@ -279,7 +279,6 @@ def make_report_prompt(Iu, Il, ratio, thr, is_pos, notes):
         f"- 판정: {judge}\n"
         f"- 참고 노트: {notes}\n\n"
         "구성:\n"
-        "◉ AI 기반 최종 분석 보고서\n"
         "1) 한줄 요약: 양성/음성과 간단 근거(Il/Iu와 임계 비교)\n"
         "2) 결과 해석(일반어): Iu/Il/Il·Iu 비율이 무엇인지와 이번 숫자의 의미\n"
         "3) 오류/주의 및 해결: 위 노트를 불릿 목록으로, 각 항목에 바로 실행 가능한 해결 방법 포함\n"
@@ -412,7 +411,7 @@ if uploaded:
     for role, text in st.session_state.get("chat_ui", []):
         (st.chat_message("user") if role=="user" else st.chat_message("assistant")).write(text)
 
-    user_q = st.chat_input("예: '분당 산부인과 추천해줘' / '임질 무증상도 있나요?' / '검사 후 뭘 해야 해?'")
+    user_q = st.chat_input("예: '(내 위치) 근처의 산부인과를 추천해줘' / '임질 증상이 뭐야?' / '임질 무증상도 있어?' / '검사 후 뭘 해야 해?'")
     if user_q:
         st.session_state["chat_ui"].append(("user", user_q))
         st.chat_message("user").write(user_q)
@@ -427,4 +426,5 @@ if uploaded:
 
 else:
     st.info("촬영한 이미지를 업로드하면 자동 분석을 시작합니다.")
+
 
