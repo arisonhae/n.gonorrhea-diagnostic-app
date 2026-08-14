@@ -1,0 +1,11 @@
+# analysis/ 스크립트 실행에 필요한 추가 패키지
+# 웹앱만 돌릴 때는 필요 없습니다.
+#
+#   pip install -r requirements.txt
+#   pip install -r requirements-analysis.txt
+
+scipy>=1.11          # Shapiro-Wilk, Welch t-test (step3, step2b)
+scikit-learn>=1.3    # ROC curve, AUC (roc_analysis)
+matplotlib>=3.7      # 그래프 저장
+pandas>=2.0          # CSV 처리 및 뷰어
+seaborn>=0.13        # 분포 시각화 (violin/swarm)
