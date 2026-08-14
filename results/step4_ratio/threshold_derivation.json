@@ -1,0 +1,56 @@
+{
+  "step3_cutoff_abs": 221.0,
+  "pair_nc": {
+    "n_all": 44,
+    "median_all": 198.0,
+    "n_negpos": 20,
+    "median_negpos": 192.5,
+    "mean": 195.79545454545453,
+    "sd": 20.030882604820945,
+    "cv_pct": 10.23051462115057
+  },
+  "method_A1_transfer_negpos_only": {
+    "description": "step3 절대 cutoff 를 neg_pos pair 의 NC 중앙값으로 나눈 값. 2025-11-06 원본 도출 조건이며 앱의 RATIO_THR 과 일치한다.",
+    "T_ratio": 1.148051948051948,
+    "n_nc": 20,
+    "median_nc": 192.5,
+    "bootstrap_ci_95": {
+      "lo": 1.1077694235588973,
+      "hi": 1.2737752161383284,
+      "n_boot": 2000
+    }
+  },
+  "method_A2_transfer_all_pairs": {
+    "description": "11-17 에 추가 촬영한 neg_neg pair 의 NC 까지 포함해 재계산. NC 표본이 늘어 중앙값이 더 안정적이다.",
+    "T_ratio": 1.1161616161616161,
+    "n_nc": 44,
+    "median_nc": 198.0,
+    "bootstrap_ci_95": {
+      "lo": 1.0913580246913581,
+      "hi": 1.1570680628272252,
+      "n_boot": 2000
+    }
+  },
+  "method_B_youden": {
+    "description": "pair ratio 분포에서 민감도+특이도 최대 지점",
+    "T_ratio": 1.1024250000000002,
+    "youden_J": 0.8333333333333334,
+    "TPR": 1.0,
+    "FPR": 0.16666666666666666,
+    "bootstrap_ci_95": {
+      "lo": 1.0866665000000002,
+      "hi": 1.19798,
+      "n_boot": 2000
+    },
+    "n_pos": 20,
+    "n_neg": 24,
+    "note": "최적점에서도 FPR 이 0 이 아니라면, 임계값 조정으로는 위양성을 더 줄일 수 없다는 뜻이다."
+  },
+  "used_for_test_all": "negpos",
+  "T_used": 1.148051948051948,
+  "robustness_note": {
+    "판정_마진_pct": 14.805194805194798,
+    "pair_NC_변동계수_pct": 10.23051462115057,
+    "해석": "판정 마진이 NC 변동계수와 비슷하거나 작으면, 기기·조명 차이만으로 판정이 뒤집힐 수 있다."
+  }
+}
