@@ -1,4 +1,4 @@
-# step4_pair_solo_relation.py 
+# step4_ratio_threshold.py
 # 이전 step에서 얻었던 결과 활용: conf=0.70, method='G', metric='p95' 고정할 것 
 # step 3 결과 negative와 positive를 가르는 negative cutoff는 221.000였음 
 # JSON 불러오지 않고 모델로 직접 ROI 검출 → 밝기 계산(G-p95) 할 것 # step 3에서는 Solo 데이터만 사용했다면, step4에서는 pair 데이터 (이미지의 roi 박스가 두개 검출되고 그 중 위는 negative, 아래는 positive)를 사용 
