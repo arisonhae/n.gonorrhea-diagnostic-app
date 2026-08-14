@@ -1,4 +1,4 @@
-# step2_2.py
+# step2b_signal_separation.py
 # 목적:
 #  - step2_fluorescence_analysis.py와 동일한 방식으로
 #    YOLOv8(conf=0.70 고정)으로 tube/ROI 검출
