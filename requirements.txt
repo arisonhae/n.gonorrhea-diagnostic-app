@@ -1,11 +1,19 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
+
+# --- 웹앱 ---
 streamlit==1.33.0
-rich==13.7.1
+
+# --- 검출 모델 ---
 ultralytics==8.1.0
-opencv-python-headless==4.8.1.78
-numpy==1.26.4
-google-generativeai==0.7.2
 torch==2.2.2+cpu
 torchvision==0.17.2+cpu
-rich==13.7.1
 
+# --- 영상 처리 ---
+opencv-python-headless==4.8.1.78
+numpy==1.26.4
+
+# --- 리포트 생성 ---
+google-generativeai==0.7.2
+
+# --- 기타 ---
+rich==13.7.1
