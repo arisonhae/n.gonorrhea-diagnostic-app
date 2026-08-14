@@ -1,0 +1,93 @@
+{
+  "settings": {
+    "conf": 0.7,
+    "method": "G",
+    "metric": "p95"
+  },
+  "results": [
+    {
+      "split": "전체",
+      "n_pos": 55,
+      "n_neg": 55,
+      "pos_mean": 238.4909090909091,
+      "pos_sd": 10.203254250796522,
+      "pos_median": 239.0,
+      "neg_mean": 204.70909090909092,
+      "neg_sd": 10.955588337689393,
+      "neg_median": 208.0,
+      "shapiro_pos_W": 0.9534382424762201,
+      "shapiro_pos_p": 0.03269300898790826,
+      "shapiro_neg_W": 0.8372823334741872,
+      "shapiro_neg_p": 3.0054982052579495e-06,
+      "both_normal": false,
+      "welch_t": 16.734513727766597,
+      "welch_p": 1.0602044748009578e-31,
+      "mannwhitney_U": 3022.0,
+      "mannwhitney_p": 1.799815538876394e-19,
+      "same_conclusion": true,
+      "cohens_d": 3.19114655772845,
+      "cliffs_delta": 0.9980165289256199,
+      "overlap_n": 6,
+      "overlap_range": [
+        221.0,
+        222.0
+      ]
+    },
+    {
+      "split": "train",
+      "n_pos": 40,
+      "n_neg": 40,
+      "pos_mean": 235.625,
+      "pos_sd": 9.085597224347826,
+      "pos_median": 237.0,
+      "neg_mean": 204.55,
+      "neg_sd": 12.025507079238716,
+      "neg_median": 208.0,
+      "shapiro_pos_W": 0.9602919534727591,
+      "shapiro_pos_p": 0.1713910278062577,
+      "shapiro_neg_W": 0.8037321176307697,
+      "shapiro_neg_p": 8.110604400949518e-06,
+      "both_normal": false,
+      "welch_t": 13.039902527874062,
+      "welch_p": 1.0584905459471517e-20,
+      "mannwhitney_U": 1599.0,
+      "mannwhitney_p": 1.4952141011336863e-14,
+      "same_conclusion": true,
+      "cohens_d": 2.915810847229775,
+      "cliffs_delta": 0.99875,
+      "overlap_n": 3,
+      "overlap_range": [
+        221.0,
+        221.0
+      ]
+    },
+    {
+      "split": "test",
+      "n_pos": 15,
+      "n_neg": 15,
+      "pos_mean": 246.13333333333333,
+      "pos_sd": 9.249453008280055,
+      "pos_median": 249.0,
+      "neg_mean": 205.13333333333333,
+      "neg_sd": 7.73550872522908,
+      "neg_median": 206.0,
+      "shapiro_pos_W": 0.8508606321545806,
+      "shapiro_pos_p": 0.01786039964595988,
+      "shapiro_neg_W": 0.9164286722219416,
+      "shapiro_neg_p": 0.16988833751168259,
+      "both_normal": false,
+      "welch_t": 13.169264086226539,
+      "welch_p": 2.6305169965831907e-13,
+      "mannwhitney_U": 225.0,
+      "mannwhitney_p": 3.113098641666425e-06,
+      "same_conclusion": true,
+      "cohens_d": 4.80873533717929,
+      "cliffs_delta": 1.0,
+      "overlap_n": 0,
+      "overlap_range": [
+        222.0,
+        229.0
+      ]
+    }
+  ]
+}

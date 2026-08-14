@@ -39,12 +39,54 @@ step4_ratio_threshold.py
 원본 대비 수정 사항
     1. 위쪽 튜브 판정이 ("neg" 로) 하드코딩되어 있어 upper_acc 가 무의미했다.
        → 절대 cutoff 로 위쪽도 실제 판정하도록 변경.
+       다만 test_all 에 위쪽이 양성인 이미지가 없어, 수정 후에도 이 경로는
+       검증되지 않는다. 해당 상황이면 출력에 그 사실을 명시한다.
+    5. 포화(G채널 255) 여부를 기록하고 경고한다.
+       포화되면 실제 형광 세기를 알 수 없으므로 ratio 가 과소평가된다.
     2. 보정 방식(none/ratio/shift/affine)을 test_all 정확도로 골랐다.
        최종 검증용 데이터로 파라미터를 선택하면 성능이 부풀려진다.
        → 임계값 도출은 pair 데이터로만, test_all 은 평가 전용으로 분리.
     3. 판정이 delta/ratio/abs 의 OR 조합이었으나 실제 앱은 ratio 단독을 쓴다.
        → ratio 단독을 기본으로 하고 나머지는 비교용 지표로만 기록.
     4. 하드코딩 경로 제거, 오버레이 저장 기본 끄기, 한글 경로 대응.
+
+실행 결과 (2026-08, weights.pt)
+
+    T_ratio = 1.1162 채택 (A-2)
+
+        방식                    n    median(NC)    T        95% CI
+        A-1  neg_pos 만        20      192.50   1.1481  [1.1078, 1.2738]
+        A-2  neg_pos+neg_neg   44      198.00   1.1162  [1.0914, 1.1571]
+        B    Youden's J        44        —      1.1024  [1.0867, 1.1980]
+
+    A-1 은 2025-11-06 원본 도출 조건이며, 앱에 있던 1.148 이 정확히
+    재현되었다. neg_neg pair 는 11-17 에 추가 촬영한 것이라 원본 시점에는
+    존재하지 않았다.
+
+    A-2 를 채택한 이유는 두 가지다.
+      · 신뢰구간 폭이 0.066 으로 A-1(0.166)의 절반 이하다.
+        n=20 에서 중앙값은 리샘플링할 때마다 크게 흔들린다.
+      · pair 자체 성능에서 위양성 수는 같고 위음성만 하나 적다.
+        1.1481 → TP18 FN2 FP4 TN20  (86.4%)
+        1.1162 → TP19 FN1 FP4 TN20  (88.6%)
+        감염자를 놓치는 쪽이 더 위험하므로 낮은 임계값이 적절하다.
+
+    Youden's J 의 FPR 이 16.7% 다. 최적점에서도 이 값이므로 임계값 조정으로
+    위양성을 더 줄일 수 없다. neg_neg 24장 중 4장이 양성으로 오판되며,
+    음성-음성 쌍과 음성-양성 쌍의 ratio 분포가 실제로 겹쳐 있다는 뜻이다.
+    이 수치는 논문에 없다.
+
+    기기별 NC 형광값
+        Galaxy Note 8   209.2
+        iPhone 13       201.7
+        iPhone 13 Pro   176.0
+
+    최대 약 19% 차이로 판정 마진(약 11.6%)보다 크다. 절댓값으로 판정했다면
+    iPhone 13 Pro 는 전부 음성으로 나왔을 것이다. 비율 정규화를 쓰는 이유가
+    데이터로 확인된다.
+
+    test_all 위쪽 정확도 100% 는 검증된 값이 아니다. 평가 대상 13장이 모두
+    위쪽 음성이라, 위쪽을 항상 음성이라고 답해도 같은 값이 나온다.
 """
 
 import argparse
@@ -94,11 +136,22 @@ def safe_crop(img, xyxy):
     return img[y1:y2, x1:x2]
 
 
+SATURATION_LEVEL = 254.0
+
+
 def g_p95_intensity(crop_bgr) -> float:
     if crop_bgr is None:
         return np.nan
     g = crop_bgr[:, :, 1].astype(np.float32)
     return float(np.percentile(g, 95.0)) if g.size else np.nan
+
+
+def sat_frac(crop_bgr) -> float:
+    """포화(255 근처)된 픽셀의 비율. 이 값이 5%%를 넘으면 p95 자체가 포화된다."""
+    if crop_bgr is None:
+        return np.nan
+    g = crop_bgr[:, :, 1].astype(np.float32)
+    return float(np.mean(g >= SATURATION_LEVEL)) if g.size else np.nan
 
 
 def center_y(b):
@@ -242,7 +295,7 @@ def main():
     ap.add_argument("--imgsz", type=int, default=P.IMG_SIZE)
     ap.add_argument("--device", default="")
     ap.add_argument("--save_viz", action="store_true")
-    ap.add_argument("--use_threshold", choices=["negpos", "all", "youden"], default="negpos",
+    ap.add_argument("--use_threshold", choices=["negpos", "all", "youden"], default="all",
                     help=("test_all 평가에 쓸 임계값. "
                           "negpos=원본 조건(앱과 동일), all=neg_neg 포함, youden=직접 최적화"))
     args = ap.parse_args()
@@ -330,28 +383,33 @@ def main():
             if img is None:
                 pair_rows.append({"image_path": str(ip), "group": group,
                                   "lower_label": lower_label, "I_nc": "", "I_sample": "",
+                                  "sat_nc": "", "sat_sample": "",
                                   "delta_pct": "", "ratio": "", "note": "IMREAD_FAIL"})
                 continue
             rs = sorted(rois, key=center_y)
             if len(rs) < 2:
                 pair_rows.append({"image_path": str(ip), "group": group,
                                   "lower_label": lower_label, "I_nc": "", "I_sample": "",
+                                  "sat_nc": "", "sat_sample": "",
                                   "delta_pct": "", "ratio": "",
                                   "note": "ROI_PARTIAL" if len(rs) == 1 else "ROI_NONE"})
                 if viz_dir is not None:
                     save_viz(img, tubes, rois, viz_dir / f"pair__{ip.stem}")
                 continue
-            Iu = g_p95_intensity(safe_crop(img, rs[0]))
-            Il = g_p95_intensity(safe_crop(img, rs[1]))
+            cu, cl = safe_crop(img, rs[0]), safe_crop(img, rs[1])
+            Iu, Il = g_p95_intensity(cu), g_p95_intensity(cl)
+            su, sl = sat_frac(cu), sat_frac(cl)
             m = (Iu + Il) / 2.0
             delta = abs(Il - Iu) / m * 100.0 if m > 0 else np.nan
             ratio = Il / Iu if Iu > 0 else np.nan
+            note = "SATURATED" if (np.isfinite(sl) and sl >= 0.05) else ""
             pair_rows.append({
                 "image_path": str(ip), "group": group, "lower_label": lower_label,
                 "I_nc": f"{Iu:.6f}", "I_sample": f"{Il:.6f}",
+                "sat_nc": f"{su:.4f}", "sat_sample": f"{sl:.4f}",
                 "delta_pct": f"{delta:.6f}" if np.isfinite(delta) else "",
                 "ratio": f"{ratio:.6f}" if np.isfinite(ratio) else "",
-                "note": "",
+                "note": note,
             })
             if viz_dir is not None:
                 save_viz(img, tubes, [rs[0], rs[1]], viz_dir / f"pair__{ip.stem}")
@@ -362,10 +420,15 @@ def main():
 
     with open(out_dir / "pair_analysis.csv", "w", newline="", encoding="utf-8-sig") as f:
         w = csv.DictWriter(f, fieldnames=["image_path", "group", "lower_label",
-                                          "I_nc", "I_sample", "delta_pct", "ratio", "note"])
+                                          "I_nc", "I_sample", "sat_nc", "sat_sample",
+                                          "delta_pct", "ratio", "note"])
         w.writeheader(); w.writerows(pair_rows)
 
     valid = [r for r in pair_rows if r["ratio"]]
+    n_sat = sum(1 for r in valid if r["note"] == "SATURATED")
+    if n_sat:
+        print(f"    [주의] 시료 ROI 가 포화된 이미지 {n_sat}장. "
+              f"포화되면 실제 형광 세기를 알 수 없어 ratio 가 과소평가된다.")
     nc_vals = np.array([float(r["I_nc"]) for r in valid])
     ratios = np.array([float(r["ratio"]) for r in valid])
     labels = np.array([1 if r["lower_label"] == "pos" else 0 for r in valid])
@@ -562,6 +625,10 @@ def main():
     if up_ci:
         print(f"  위(NC)   정확도 : {up_ci['point']*100:5.1f}%  "
               f"({up_ci['k']}/{up_ci['n']})  95% CI {up_ci['lo']*100:.1f}–{up_ci['hi']*100:.1f}%")
+        if all(r["upper_exp"] == "neg" for r in ev):
+            print("      ※ 평가 대상에 위쪽이 양성인 이미지가 없다.")
+            print("        위쪽을 항상 음성이라고 답해도 같은 값이 나오므로,")
+            print("        이 수치는 위쪽 판정 능력을 검증하지 못한다.")
     if both_ci:
         print(f"  둘 다 맞은 비율   : {both_ci['point']*100:5.1f}%  "
               f"({both_ci['k']}/{both_ci['n']})  95% CI {both_ci['lo']*100:.1f}–{both_ci['hi']*100:.1f}%")

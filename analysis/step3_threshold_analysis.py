@@ -10,10 +10,23 @@ step3_threshold_analysis.py
     1. YOLO 로 ROI 검출 (conf=0.70 고정)
     2. ROI 의 G채널 95백분위수를 이미지 대표값 I 로 사용
        (ROI 가 여러 개면 그중 최댓값)
-    3. train/neg 분포에 Shapiro-Wilk 정규성 검정
-       - 정규분포로 볼 수 있으면  cutoff = mean + 3*SD
-       - 아니면                   cutoff = 99.7 백분위수
-    4. test 데이터에 cutoff 를 적용해 혼동행렬 산출
+    3. 음성 기준선을 세 방식으로 산출해 비교한다.
+
+       [A]  99.7 백분위수 — 음성 분포만 사용. 원본 방식.
+            표본이 적으면 이 값은 최댓값과 같아지므로,
+            가장 밝은 음성 이미지 한 장이 기준선을 결정하게 된다.
+
+       [A'] mean + 3SD — 정규성을 전제한다.
+            Shapiro-Wilk 로 가정이 성립하는지 함께 확인한다.
+
+       [B]  Youden's J — 양성과 음성을 모두 사용해
+            민감도+특이도가 최대가 되는 지점을 찾는다.
+            음성만 보는 방식과 달리 양성 정보를 버리지 않는다.
+
+       세 값 모두 부트스트랩 신뢰구간을 산출한다.
+
+    4. test 데이터에 적용해 혼동행렬과 Wilson 신뢰구간을 낸다.
+       세 방식을 각각 적용했을 때 결과가 어떻게 달라지는지도 함께 보인다.
 
 출력
     results/step3_threshold/
@@ -30,33 +43,56 @@ step3_threshold_analysis.py
     # 검출 결과 이미지도 저장하려면 (용량 주의)
     python analysis/step3_threshold_analysis.py --save_viz
 
-주의
-    train 음성 n=40 에서 99.7 백분위수를 쓰면 사실상 최댓값에 가까워지므로,
-    극단값 하나가 cutoff 전체를 좌우한다. 이 한계는 README 에 기술되어 있다.
+실행
+    python analysis/step3_threshold_analysis.py
+
+    # 다른 기준선 방식으로 계산
+    python analysis/step3_threshold_analysis.py --cutoff_rule youden
 
 수정 이력
+    - 기준선 산출을 세 방식(99.7 백분위수 / mean+3SD / Youden's J) 비교로
+      확장하고, 각각에 부트스트랩 신뢰구간을 추가
+    - 정확도·민감도·특이도에 Wilson 신뢰구간 추가
     - 하드코딩 경로를 paths.py 로 이관
     - 오버레이 이미지 저장을 기본 끄기로 변경 (PNG 누적 용량 문제)
     - 저장 시에도 JPEG + 리사이즈로 용량 축소
 
-실행 결과 (2026-08)
-    cutoff = 221.0 (train 음성 40장의 99.7 백분위수)
+실행 결과 (2026-08, weights.pt, solo 110장)
 
-    n=40 에서 99.7 백분위수는 최댓값과 같아진다. 실제로 train 음성의
-    최댓값이 정확히 221.0 이며, 단일 극단값이 기준선 전체를 결정한다.
+    cutoff = 221.0 (99.7 백분위수) 유지
 
-    test 에서 발생한 위양성 1건은 solo_test_neg_tube_1_2 (I=222.0) 로,
-    cutoff 와 1 차이다.
+        방식              T        95% CI           test 결과
+        p99.7         221.000  [213.88, 221.00]   TP15 FN0 FP1 TN14  96.7%
+        mean+3SD      240.627   —                 TP11 FN4 FP0 TN15  86.7%
+        Youden's J    221.500  [217.00, 223.00]   TP15 FN0 FP1 TN14  96.7%
+
+    n=40 에서 99.7 백분위수는 최댓값과 같아지므로, 가장 밝은 음성 이미지
+    한 장이 기준선을 결정하는 구조인 것은 사실이다. 그러나 양성 정보까지
+    활용하는 Youden's J 로 재산출한 값이 221.5 로 거의 같았고 test 성능도
+    동일했다. 방법을 바꿀 근거가 없다.
+
+    정규성을 전제한 mean+3SD 는 위음성 4건을 발생시켜 정확도가 86.7% 로
+    떨어진다. Shapiro-Wilk p<0.0001 로 가정이 기각되므로 부적절하며,
+    포스터의 µ+3σ 표기는 오류다.
+
+    부트스트랩 신뢰구간의 상한이 221.00 인 것은 최댓값에 막혀 있기 때문이다.
+    리샘플링해도 최댓값을 넘을 수 없다. Youden 기준 [217.00, 223.00] 쪽이
+    불확실성을 더 정직하게 표현한다.
+
+    test 성능 (95% CI)
+        정확도  96.7%  29/30   83.3 – 99.4%
+        민감도 100.0%  15/15   79.6 – 100.0%
+        특이도  93.3%  14/15   70.2 –  98.8%
+
+    위양성 1건은 solo_test_neg_tube_1_2 (I=222.0) 로 cutoff 와 1 차이다.
+    train 음성의 최댓값이 221 이어서 생긴 일이며, 음성 표본을 늘리면
+    기준선이 올라가 이 오판이 사라질 가능성이 높다.
+    방법론의 문제가 아니라 표본 수의 문제다.
 
     test set 15장 중 5장(blue, 2x, r_0)은 촬영 조건 최적화 실험에서 나온
     이미지이며, 양성 5장이 모두 G_p95 = 255 로 포화되었다. 포화된 값은
-    무조건 cutoff 를 넘으므로 이 5장은 사실상 자동 정답이 된다.
-    기본 조건(tube_*) 20장만으로 계산하면 정확도는 95.0% 이고,
-    특수 조건을 포함한 전체 30장 기준은 96.7% 다.
-
-    임계값 산출에 쓰인 train 80장과 pair 44장에는 포화가 없다.
-    다만 train 양성의 최댓값이 254 로 상한에 근접해 있어,
-    조명이 조금만 더 강해도 측정이 불가능해진다.
+    무조건 cutoff 를 넘으므로 사실상 자동 정답이 된다. 기본 조건(tube_*)
+    20장만으로 계산하면 정확도는 95.0% 다.
 """
 
 import argparse
@@ -162,6 +198,68 @@ def qq_plot(values, out_png: Path, title: str):
     plt.close(fig)
 
 
+def youden_threshold(pos_vals, neg_vals):
+    """
+    민감도 + 특이도 - 1 이 최대가 되는 지점.
+    음성 분포만 보는 백분위수 방식과 달리 양성 정보까지 사용한다.
+    """
+    v = np.concatenate([np.asarray(pos_vals, float), np.asarray(neg_vals, float)])
+    y = np.concatenate([np.ones(len(pos_vals), int), np.zeros(len(neg_vals), int)])
+    m = np.isfinite(v)
+    v, y = v[m], y[m]
+    if v.size < 4 or len(np.unique(y)) < 2:
+        return np.nan, np.nan, np.nan, np.nan
+
+    order = np.argsort(v)
+    v, y = v[order], y[order]
+    P_, N_ = int((y == 1).sum()), int((y == 0).sum())
+    TP_right = np.cumsum((y == 1).astype(int)[::-1])[::-1]
+    FP_right = np.cumsum((y == 0).astype(int)[::-1])[::-1]
+
+    best = (-1.0, np.nan, np.nan, np.nan)
+    for i in np.where(np.diff(v) != 0)[0]:
+        TPR = TP_right[i + 1] / P_
+        FPR = FP_right[i + 1] / N_
+        J = TPR - FPR
+        if J > best[0]:
+            best = (J, (v[i] + v[i + 1]) / 2.0, TPR, FPR)
+    J, T, TPR, FPR = best
+    return float(T), float(J), float(TPR), float(FPR)
+
+
+def bootstrap_ci(func, *arrays, n=2000, seed=0, alpha=0.05):
+    """같은 길이의 배열들을 함께 리샘플링해 func 결과의 신뢰구간을 구한다."""
+    rng = np.random.default_rng(seed)
+    size = len(arrays[0])
+    if size < 3:
+        return None
+    out = []
+    for _ in range(n):
+        idx = rng.integers(0, size, size)
+        try:
+            val = func(*[np.asarray(a)[idx] for a in arrays])
+        except Exception:
+            continue
+        if val is not None and np.isfinite(val):
+            out.append(val)
+    if len(out) < n * 0.5:
+        return None
+    lo, hi = np.percentile(out, [alpha / 2 * 100, (1 - alpha / 2) * 100])
+    return {"lo": float(lo), "hi": float(hi), "n_boot": len(out)}
+
+
+def wilson_ci(k, n, z=1.96):
+    """이항 비율의 Wilson 신뢰구간."""
+    if n == 0:
+        return None
+    p = k / n
+    d = 1 + z**2 / n
+    c = p + z**2 / (2 * n)
+    s = z * np.sqrt(p * (1 - p) / n + z**2 / (4 * n**2))
+    return {"point": p, "lo": float((c - s) / d), "hi": float((c + s) / d),
+            "k": int(k), "n": int(n)}
+
+
 def eval_cutoff(pos_vals, neg_vals, cutoff):
     TP = sum(1 for v in pos_vals if v >= cutoff)
     FN = sum(1 for v in pos_vals if v < cutoff)
@@ -197,6 +295,9 @@ def main():
     ap.add_argument("--class_roi_name", default="roi")
     ap.add_argument("--save_viz", action="store_true",
                     help="검출 오버레이 이미지 저장 (기본 꺼짐, 용량 주의)")
+    ap.add_argument("--cutoff_rule", choices=["p99.7", "mean3sd", "youden"],
+                    default="p99.7",
+                    help="음성 기준선 산출 방식. 기본은 원본과 같은 p99.7")
     args = ap.parse_args()
 
     # conf 는 step1 에서 확정된 값으로 고정한다
@@ -323,19 +424,65 @@ def main():
     if len(train_neg) < 3:
         raise SystemExit("train 음성 샘플이 3개 미만이라 기준선을 산출할 수 없습니다.")
 
-    # ---- 음성 기준선 ----
+    # ---- 음성 기준선: 세 방식 비교 ----
     sh_W, sh_p = stats.shapiro(train_neg)
     mean_v = float(np.mean(train_neg))
     std_v = float(np.std(train_neg, ddof=1))
     p997 = float(np.percentile(train_neg, 99.7))
+    p95 = float(np.percentile(train_neg, 95.0))
+    max_v = float(np.max(train_neg))
 
     is_normal = bool(sh_p > 0.05)
-    cutoff = (mean_v + 3.0 * std_v) if is_normal else p997
+
+    print()
+    print("=" * 64)
+    print("음성 기준선 산출 · 세 방식 비교")
+    print("=" * 64)
+    print(f"  train 음성 n={len(train_neg)}  "
+          f"mean={mean_v:.2f}  SD={std_v:.2f}  range=[{np.min(train_neg):.1f}, {max_v:.1f}]")
+    print(f"  Shapiro-Wilk  W={sh_W:.4f}  p={sh_p:.4f}  "
+          f"→ {'정규분포로 볼 수 있음' if is_normal else '정규분포로 보기 어려움'}")
+    print()
+
+    # [A] 백분위수 (원본 방식)
+    T_a = p997
+    ci_a = bootstrap_ci(lambda a: np.percentile(a, 99.7), train_neg)
+    print(f"  [A] 99.7 백분위수 · 음성 분포만 사용  (원본 방식)")
+    print(f"      T = {T_a:.3f}")
+    if ci_a:
+        print(f"      95% CI = [{ci_a['lo']:.2f}, {ci_a['hi']:.2f}]")
+    if abs(T_a - max_v) < 1e-6:
+        print(f"      ※ n={len(train_neg)} 에서 99.7 백분위수는 최댓값과 같아진다.")
+        print(f"         단일 극단값이 기준선 전체를 결정한다.")
+
+    # [A'] 참고: mean + 3SD
+    T_a2 = mean_v + 3.0 * std_v
+    print(f"  [A'] mean + 3SD  = {T_a2:.3f}   "
+          f"({'정규성이 성립하지 않아 근거가 약하다' if not is_normal else '참고값'})")
+
+    # [B] Youden's J — 양성 정보까지 사용
+    T_b, J, TPR, FPR = youden_threshold(train_pos, train_neg)
+    ci_b = bootstrap_ci(
+        lambda p_, n_: youden_threshold(p_, n_)[0],
+        train_pos, train_neg) if len(train_pos) == len(train_neg) else None
+    print(f"\n  [B] Youden's J · 양성과 음성을 모두 사용")
+    if np.isfinite(T_b):
+        print(f"      T = {T_b:.3f}  (J={J:.3f}, TPR={TPR:.3f}, FPR={FPR:.3f})")
+        if ci_b:
+            print(f"      95% CI = [{ci_b['lo']:.2f}, {ci_b['hi']:.2f}]")
+    else:
+        print("      계산 불가 (표본 부족)")
+
+    # 사용할 값 선택
+    T_map = {"p99.7": T_a, "mean3sd": T_a2, "youden": T_b}
+    cutoff = T_map[args.cutoff_rule]
+    print(f"\n  → 사용할 기준선: {cutoff:.3f}  ({args.cutoff_rule})\n")
 
     qq_plot(train_neg, out_dir / "neg_baseline_qq.png", "Q-Q plot (train NEG)")
 
     neg_stats = {
         "n_train_neg": len(train_neg),
+        "n_train_pos": len(train_pos),
         "shapiro_W": float(sh_W),
         "shapiro_p": float(sh_p),
         "is_normal_by_p_gt_0.05": is_normal,
@@ -343,13 +490,30 @@ def main():
         "std": std_v,
         "median": float(np.median(train_neg)),
         "min": float(np.min(train_neg)),
-        "max": float(np.max(train_neg)),
+        "max": max_v,
         "skew": float(stats.skew(train_neg, bias=False)),
         "kurtosis": float(stats.kurtosis(train_neg, bias=False)),
-        "p99_7": p997,
-        "mean_plus_3sd": mean_v + 3.0 * std_v,
+        "method_A_percentile": {
+            "description": "음성 분포의 99.7 백분위수. 원본 방식.",
+            "p99_7": p997, "p95": p95,
+            "equals_max": bool(abs(p997 - max_v) < 1e-6),
+            "bootstrap_ci_95": ci_a,
+        },
+        "method_A2_mean_plus_3sd": {
+            "description": "평균 + 3표준편차. 정규성을 전제한다.",
+            "value": T_a2,
+            "assumption_valid": is_normal,
+        },
+        "method_B_youden": {
+            "description": "민감도+특이도 최대 지점. 양성 정보까지 사용한다.",
+            "T": T_b if np.isfinite(T_b) else None,
+            "youden_J": J if np.isfinite(J) else None,
+            "TPR": TPR if np.isfinite(TPR) else None,
+            "FPR": FPR if np.isfinite(FPR) else None,
+            "bootstrap_ci_95": ci_b,
+        },
+        "cutoff_rule": args.cutoff_rule,
         "cutoff": cutoff,
-        "cutoff_rule": "mean+3SD" if is_normal else "p99.7",
         "fixed_settings": {"conf": CONF, "method": METHOD, "metric": METRIC},
     }
     (out_dir / "neg_baseline_stats.json").write_text(
@@ -368,25 +532,55 @@ def main():
         "settings_fixed": {"conf": CONF, "method": METHOD, "metric": METRIC},
         "negative_baseline": neg_stats,
         "test_eval_negative_cut": test_eval,
+        "test_eval_ci": {
+            "accuracy": wilson_ci(test_eval["TP"] + test_eval["TN"],
+                                  test_eval["n_pos"] + test_eval["n_neg"]),
+            "sensitivity": wilson_ci(test_eval["TP"], test_eval["n_pos"]),
+            "specificity": wilson_ci(test_eval["TN"], test_eval["n_neg"]),
+        },
+        "test_eval_by_rule": {
+            name: eval_cutoff(test_pos, test_neg, T)
+            for name, T in (("p99.7", T_a), ("mean3sd", T_a2), ("youden", T_b))
+            if np.isfinite(T)
+        },
     }
     (out_dir / "summary.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False), encoding="utf-8")
 
     # ---- 출력 ----
+    print("=" * 64)
+    print("Test 평가")
+    print("=" * 64)
+    acc_ci = wilson_ci(test_eval["TP"] + test_eval["TN"],
+                       test_eval["n_pos"] + test_eval["n_neg"])
+    sens_ci = wilson_ci(test_eval["TP"], test_eval["n_pos"])
+    spec_ci = wilson_ci(test_eval["TN"], test_eval["n_neg"])
+    print(f"  TP={test_eval['TP']}  FN={test_eval['FN']}  "
+          f"FP={test_eval['FP']}  TN={test_eval['TN']}")
+    if acc_ci:
+        print(f"  정확도  {acc_ci['point']*100:5.1f}%  ({acc_ci['k']}/{acc_ci['n']})"
+              f"   95% CI {acc_ci['lo']*100:.1f}–{acc_ci['hi']*100:.1f}%")
+    if sens_ci:
+        print(f"  민감도  {sens_ci['point']*100:5.1f}%  ({sens_ci['k']}/{sens_ci['n']})"
+              f"   95% CI {sens_ci['lo']*100:.1f}–{sens_ci['hi']*100:.1f}%")
+    if spec_ci:
+        print(f"  특이도  {spec_ci['point']*100:5.1f}%  ({spec_ci['k']}/{spec_ci['n']})"
+              f"   95% CI {spec_ci['lo']*100:.1f}–{spec_ci['hi']*100:.1f}%")
+
+    # 다른 방식을 썼다면 결과가 어떻게 달라지는지
     print()
-    print("=" * 60)
-    print(f"  Shapiro-Wilk : W={sh_W:.4f}, p={sh_p:.4f} "
-          f"→ {'정규분포로 볼 수 있음' if is_normal else '정규분포로 보기 어려움'}")
-    print(f"  train NEG    : mean={mean_v:.2f}, SD={std_v:.2f}, "
-          f"range=[{np.min(train_neg):.1f}, {np.max(train_neg):.1f}]")
-    print(f"  mean+3SD     : {mean_v + 3*std_v:.3f}")
-    print(f"  p99.7        : {p997:.3f}")
-    print(f"  → cutoff     : {cutoff:.3f}  ({neg_stats['cutoff_rule']})")
-    print("-" * 60)
-    print(f"  Test  ACC={test_eval['ACC']*100:.1f}%  "
-          f"TP={test_eval['TP']} FN={test_eval['FN']} "
-          f"FP={test_eval['FP']} TN={test_eval['TN']}")
-    print("=" * 60)
+    print("-" * 64)
+    print("  기준선을 바꾸면 test 결과가 어떻게 달라지는가")
+    print("-" * 64)
+    for name, T in (("p99.7  ", T_a), ("mean+3SD", T_a2), ("youden ", T_b)):
+        if not np.isfinite(T):
+            continue
+        e = eval_cutoff(test_pos, test_neg, T)
+        mark = " ←" if abs(T - cutoff) < 1e-9 else ""
+        print(f"  {name} T={T:7.2f}   TP={e['TP']:2d} FN={e['FN']:2d} "
+              f"FP={e['FP']:2d} TN={e['TN']:2d}   ACC={e['ACC']*100:5.1f}%{mark}")
+
+    print("=" * 64)
     print(f"\n[저장] {out_dir}")
 
 

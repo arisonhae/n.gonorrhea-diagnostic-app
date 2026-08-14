@@ -1,5 +1,6 @@
 {
   "n_train_neg": 40,
+  "n_train_pos": 40,
   "shapiro_W": 0.8037321176307697,
   "shapiro_p": 8.110604400949518e-06,
   "is_normal_by_p_gt_0.05": false,
@@ -10,10 +11,36 @@
   "max": 221.0,
   "skew": -1.6966305055759563,
   "kurtosis": 2.7233427115578372,
-  "p99_7": 221.0,
-  "mean_plus_3sd": 240.62652123771616,
-  "cutoff": 221.0,
+  "method_A_percentile": {
+    "description": "음성 분포의 99.7 백분위수. 원본 방식.",
+    "p99_7": 221.0,
+    "p95": 214.34999999999997,
+    "equals_max": true,
+    "bootstrap_ci_95": {
+      "lo": 213.883,
+      "hi": 221.0,
+      "n_boot": 2000
+    }
+  },
+  "method_A2_mean_plus_3sd": {
+    "description": "평균 + 3표준편차. 정규성을 전제한다.",
+    "value": 240.62652123771616,
+    "assumption_valid": false
+  },
+  "method_B_youden": {
+    "description": "민감도+특이도 최대 지점. 양성 정보까지 사용한다.",
+    "T": 221.5,
+    "youden_J": 0.975,
+    "TPR": 0.975,
+    "FPR": 0.0,
+    "bootstrap_ci_95": {
+      "lo": 217.0,
+      "hi": 223.0,
+      "n_boot": 2000
+    }
+  },
   "cutoff_rule": "p99.7",
+  "cutoff": 221.0,
   "fixed_settings": {
     "conf": 0.7,
     "method": "G",
