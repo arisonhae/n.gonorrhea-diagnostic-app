@@ -1,0 +1,22 @@
+{
+  "n_train_neg": 40,
+  "shapiro_W": 0.8037321176307697,
+  "shapiro_p": 8.110604400949518e-06,
+  "is_normal_by_p_gt_0.05": false,
+  "mean": 204.55,
+  "std": 12.025507079238716,
+  "median": 208.0,
+  "min": 169.0,
+  "max": 221.0,
+  "skew": -1.6966305055759563,
+  "kurtosis": 2.7233427115578372,
+  "p99_7": 221.0,
+  "mean_plus_3sd": 240.62652123771616,
+  "cutoff": 221.0,
+  "cutoff_rule": "p99.7",
+  "fixed_settings": {
+    "conf": 0.7,
+    "method": "G",
+    "metric": "p95"
+  }
+}
