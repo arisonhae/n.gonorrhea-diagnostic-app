@@ -31,7 +31,7 @@ IOU = 0.50
 IMG_SIZE = 640
 
 # 임계 설정 (사용자 고정값)
-RATIO_THR = 1.148       # Il/Iu 임계
+RRATIO_THR = 1.1162     # step4: 221.0 / median(pair NC, n=44). 원본 1.148은 n=20 기준 — CHANGELOG 참고
 ABS_NEG_CUTOFF = 221.0  # 상단(음성튜브) 절대 밝기 컷오프
 
 # 렌더링 옵션

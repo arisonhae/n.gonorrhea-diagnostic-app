@@ -104,7 +104,7 @@ CONF_MIN = 0.70          # step1: confidence 스윕으로 선정
 IOU = 0.50
 IMG_SIZE = 640
 ABS_NEG_CUTOFF = 221.0   # step3: 음성 기준선 (G-p95 절댓값)
-RATIO_THR = 1.148        # step4: 양성 판정 비율 (Il/Iu)
+RATIO_THR = 1.1162        # step4: 양성 판정 비율 (Il/Iu) (사용한 이미지: neg_pos + neg_neg pair (기존 1.148은 neg_pos만 상))
 
 
 # ------------------------------------------------------------------
