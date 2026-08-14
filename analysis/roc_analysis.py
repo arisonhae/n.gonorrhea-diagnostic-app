@@ -1,4 +1,4 @@
-# ROC.py
+# roc_analysis.py
 # YOLO ROI 검출 + 형광(G-p95) 계산 → ROC curve 계산 및 저장 + ROI 시각화 저장
 # 실행 예:
 #   python "C:\n.gonorrhea_diagnostic_app\analysis_code\ROC.py" ^
