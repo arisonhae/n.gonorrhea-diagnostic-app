@@ -25,14 +25,22 @@ except Exception:
     raise
 
 # ------------------- 전역 고정 파라미터 (변경 금지) -------------------
-MODEL_PATH_DEFAULT = "models/new_weights.pt"
+MODEL_PATH_DEFAULT = "models/weights.pt"
 CONF_MIN = 0.70
 IOU = 0.50
 IMG_SIZE = 640
 
-# 임계 설정 (사용자 고정값)
-RRATIO_THR = 1.1162     # step4: 221.0 / median(pair NC, n=44). 원본 1.148은 n=20 기준 — CHANGELOG 참고
-ABS_NEG_CUTOFF = 221.0  # 상단(음성튜브) 절대 밝기 컷오프
+# ------------------- 판정 파라미터 -------------------
+# 근거는 analysis/ 의 각 스크립트 docstring 과 CHANGELOG.md 참고.
+RATIO_THR = 1.1162       # step4: 221.0 / median(pair NC, n=44)
+                         #        원본 1.148 은 neg_pos 20장 기준이었다
+ABS_NEG_CUTOFF = 221.0   # step3: train 음성 40장의 99.7 백분위수
+                         #        상단 튜브가 이 값을 넘으면 NC 가 아닐 수 있다
+SATURATION_LEVEL = 254.0    # 8비트 상한. 이 값 이상은 실제 밝기를 알 수 없다
+SATURATION_MAX_FRAC = 0.05  # 포화 픽셀이 5% 를 넘으면 p95 자체가 포화된다
+BORDERLINE_MARGIN = 0.05    # 임계값에서 이 이내면 경계값으로 보고 재촬영을 권한다
+                            # 음성-음성 쌍의 ratio 표준편차가 0.089 이므로,
+                            # 이 범위의 판정은 재촬영 시 뒤집힐 수 있다
 
 # 렌더링 옵션
 BOX_THICK = 4
@@ -57,13 +65,26 @@ if "chat_ui" not in st.session_state:
 if "gemini_model" not in st.session_state:
     st.session_state["gemini_model"] = "gemini-2.5-flash"
 
+# ---------------- secrets 안전 접근 ----------------
+def _secret(key: str, default=None):
+    """
+    st.secrets 는 secrets.toml 파일 자체가 없으면 .get() 호출만으로도
+    FileNotFoundError 를 던진다. 저장소를 clone 한 사람은 그 파일이 없으므로
+    앱이 첫 화면부터 죽는다.
+    키가 없으면 기능만 조용히 비활성화되도록 감싼다.
+    """
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
 # ---------------- Google Custom Search (선택) ----------------
 def cse_available() -> bool:
-    return bool(st.secrets.get("GOOGLE_API_KEY")) and bool(st.secrets.get("GOOGLE_CSE_ID"))
+    return bool(_secret("GOOGLE_API_KEY")) and bool(_secret("GOOGLE_CSE_ID"))
 
 def google_cse_search(query: str, num: int = 6) -> list:
-    api_key = st.secrets.get("GOOGLE_API_KEY")
-    cse_id  = st.secrets.get("GOOGLE_CSE_ID")
+    api_key = _secret("GOOGLE_API_KEY")
+    cse_id  = _secret("GOOGLE_CSE_ID")
     if not (api_key and cse_id):
         return []
     try:
@@ -90,7 +111,7 @@ def google_cse_search(query: str, num: int = 6) -> list:
 def kakao_search_places(query: str, size: int = 5) -> list:
     # 카카오 키워드 검색 결과 반환.
     # 반환: [{name, address, phone, url}] 리스트
-    kakao_key = st.secrets.get("KAKAO_API_KEY")
+    kakao_key = _secret("KAKAO_API_KEY")
     if not kakao_key:
         return []
 
@@ -143,6 +164,18 @@ def g_p95(crop_bgr):
         return np.nan
     G = crop_bgr[:,:,1].astype(np.float32)
     return float(np.percentile(G, 95.0))
+
+def sat_frac(crop_bgr):
+    """
+    포화된 픽셀의 비율.
+    8비트 이미지의 채널 상한은 255 이므로, 형광이 그보다 강하면 값이 잘린다.
+    p95 는 상위 5% 지점이므로 포화 비율이 5% 를 넘으면 p95 자체가 포화된다.
+    그 경우 실제 형광 세기를 알 수 없어 판정이 성립하지 않는다.
+    """
+    if crop_bgr is None:
+        return np.nan
+    G = crop_bgr[:,:,1].astype(np.float32)
+    return float(np.mean(G >= SATURATION_LEVEL))
 
 def draw_label(img, text, x, y, color):
     (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, FONT_SCALE, FONT_THICK)
@@ -206,39 +239,93 @@ def detect_pair_and_measure(img_bgr, model):
     upper, lower = (tri[0] if len(tri) >= 1 else None), (tri[1] if len(tri) >= 2 else None)
 
     Iu = Il = np.nan
-    if upper:  Iu = g_p95(safe_crop(img_bgr, upper[3]))
-    if lower:  Il = g_p95(safe_crop(img_bgr, lower[3]))
+    sat_u = sat_l = np.nan
+    if upper:
+        crop_u = safe_crop(img_bgr, upper[3])
+        Iu, sat_u = g_p95(crop_u), sat_frac(crop_u)
+    if lower:
+        crop_l = safe_crop(img_bgr, lower[3])
+        Il, sat_l = g_p95(crop_l), sat_frac(crop_l)
     ratio = (Il / Iu) if (np.isfinite(Iu) and Iu > 0) else np.nan
 
     # ----- 오류/주의 가이드 (행동 지시형) -----
+    # notes 는 사용자에게 보여줄 안내,
+    # blockers 는 판정을 내리면 안 되는 이유다.
+    # 안내만 띄우고 판정을 그대로 내보내면, 사용자가 경고를 지나칠 경우
+    # 잘못된 결과를 사실로 받아들이게 된다.
     notes = []
+    blockers = []
+
     if len(tubes) == 0 or all(cf < CONF_MIN for cf in tubes_conf):
         notes.append(
             "튜브가 잘 잡히지 않습니다: 초점이 맞지 않았거나 강한 빛반사가 있을 수 있어요. "
             "카메라를 10–15cm 거리에서 정면에 가깝게 두고 렌즈를 닦은 뒤, 상부 조명이 비껴가도록 각도를 약간 바꿔 재촬영해 주세요."
         )
+
     if (upper is None or lower is None):
         notes.append(
             "표적 영역이 한쪽만 잡히거나 빠졌습니다: 용액이 흩어진(splash) 상황일 수 있어요. "
             "튜브를 수직으로 세우고 바닥을 2–3회 가볍게 톡톡 쳐서 용액이 바닥으로 모이게 한 뒤, 거품이 가라앉으면 재촬영해 주세요."
         )
+        blockers.append("표적 영역이 두 개 모두 검출되지 않음")
+
+    # 튜브가 셋 이상이면 위 두 개만 쓰게 되는데,
+    # 사용자가 의도한 조합이 아닐 수 있으므로 알린다.
+    if len(tri) > 2:
+        notes.append(
+            f"튜브가 {len(tri)}개 검출되었습니다. 위에서 두 번째까지만 판정에 사용합니다. "
+            "화면에 NC와 검사 시료 두 개만 담아 재촬영해 주세요."
+        )
+        blockers.append(f"튜브가 {len(tri)}개 검출됨")
+
+    # 상단이 지나치게 밝으면 NC 가 아닐 가능성이 크다.
+    # 튜브를 뒤집어 놓은 경우(양성을 위에) ratio 가 1 보다 작아져
+    # 음성으로 표시되므로, 경고만 띄우면 위음성이 그대로 나간다.
     if np.isfinite(Iu) and Iu >= ABS_NEG_CUTOFF:
         notes.append(
-            "상단(기준) 밝기가 비정상적으로 높습니다. 상단에는 반드시 음성 대조(NC)를 사용하고, 반사광이 강하면 각도를 조정해 재촬영해 주세요."
+            "상단(기준) 밝기가 비정상적으로 높습니다. 상단에는 반드시 음성 대조(NC)를 올려 주세요. "
+            "튜브 순서가 바뀌지 않았는지 확인하고, 반사광이 강하면 각도를 조정해 재촬영해 주세요."
         )
+        blockers.append("상단 밝기가 음성 기준선을 초과 (튜브 순서 확인 필요)")
+
+    # 포화되면 실제 형광 세기를 알 수 없으므로 비율이 의미를 잃는다.
+    for _name, _s in (("상단", sat_u), ("하단", sat_l)):
+        if np.isfinite(_s) and _s >= SATURATION_MAX_FRAC:
+            notes.append(
+                f"{_name} 튜브의 밝기가 측정 한계를 넘었습니다(포화). 실제 형광 세기를 알 수 없습니다. "
+                "조명을 약하게 하거나 촬영 거리를 늘려 재촬영해 주세요."
+            )
+            blockers.append(f"{_name} 튜브 포화")
+
     if not np.isfinite(ratio):
         notes.append(
             "Il/Iu 비율을 계산할 수 없습니다: 위 안내대로 재촬영 후 다시 시도해 주세요."
         )
+        blockers.append("비율 계산 불가")
 
-    is_positive = (np.isfinite(ratio) and ratio >= RATIO_THR)
+    # 막을 이유가 하나라도 있으면 판정하지 않는다.
+    is_valid = (len(blockers) == 0) and bool(np.isfinite(ratio))
+    is_positive = bool(is_valid and ratio >= RATIO_THR)
+
+    # 임계값 바로 근처의 판정은 재촬영하면 뒤집힐 수 있다.
+    # 음성 시료끼리 찍어도 ratio 가 ±0.089 정도 흔들리므로,
+    # 이 범위 안의 결과는 확정으로 받아들이면 안 된다.
+    is_borderline = bool(
+        is_valid and abs(ratio - RATIO_THR) <= BORDERLINE_MARGIN
+    )
+    if is_borderline:
+        notes.append(
+            f"비율 {ratio:.4f} 가 판정 기준({RATIO_THR})에 매우 가깝습니다. "
+            "같은 시료라도 촬영에 따라 결과가 달라질 수 있으니, "
+            "한 번 더 촬영해 결과가 같은지 확인해 주세요."
+        )
 
     viz_items = dict(
         tubes=[(tb, tcf) for (tb, tcf, _, _) in pairs],
         rois=[(rb, rcf) for (_, _, rb, rcf) in pairs if rb is not None],
         upper=upper, lower=lower
     )
-    return Iu, Il, ratio, is_positive, notes, viz_items
+    return Iu, Il, ratio, is_positive, is_valid, is_borderline, blockers, notes, viz_items
 
 def overlay_visual(img_bgr, viz_items):
     canvas = img_bgr.copy()
@@ -257,7 +344,7 @@ def _get_gemini_model():
     except Exception:
         st.warning("google-generativeai 패키지가 필요합니다. `pip install google-generativeai`")
         return None, None
-    api_key = st.secrets.get("GEMINI_API_KEY")
+    api_key = _secret("GEMINI_API_KEY")
     if not api_key:
         return None, None
     genai.configure(api_key=api_key)
@@ -463,8 +550,9 @@ def gemini_answer(user_msg: str, context_ko: str | None = None) -> str:
     return gemini_safe_reply(prompt, context_ko or "컨텍스트 없음")
 
 # ================= Streamlit UI =================
-st.set_page_config(page_title="스마트폰 기반 임질 진단 시스템", layout="wide")
-st.title("스마트폰 기반 임질 진단 시스템")
+st.set_page_config(page_title="GonoCheck", page_icon="🔬", layout="wide")
+st.title("GonoCheck")
+st.caption("스마트폰 기반 임질 진단 시스템")
 
 with st.sidebar:
     st.subheader("설정 (고정값)")
@@ -501,7 +589,8 @@ if uploaded:
         st.error(f"YOLO 가중치를 불러오지 못했습니다: {e}")
         st.stop()
 
-    Iu, Il, ratio, is_pos, notes, viz_items = detect_pair_and_measure(img_bgr, model)
+    Iu, Il, ratio, is_pos, is_valid, is_borderline, blockers, notes, viz_items = \
+        detect_pair_and_measure(img_bgr, model)
     viz = overlay_visual(img_bgr, viz_items)
     show_bgr_image_safe(viz, caption="검출 결과 (CONF<0.70 선 숨김)")
 
@@ -513,18 +602,28 @@ if uploaded:
         delta_txt = f"임계 {RATIO_THR}"
         st.metric("비율 Il/Iu", f"{ratio:.3f}" if np.isfinite(ratio) else "N/A", delta=delta_txt)
 
-    if np.isfinite(ratio):
+    if is_valid:
         if is_pos: st.error("조합 판정: **POSITIVE** (양성 가능성 있음)")
         else:      st.success("조합 판정: **NEGATIVE** (음성 가능성 높음)")
+        if is_borderline:
+            st.warning(
+                f"**경계값** — 비율 {ratio:.4f} 가 판정 기준({RATIO_THR})에서 "
+                f"{abs(ratio - RATIO_THR):.4f} 밖에 떨어져 있지 않습니다. "
+                "재촬영 후 결과가 같은지 확인해 주세요."
+            )
     else:
-        st.warning("조합 판정 불가")
+        st.warning("**판정 불가** — 아래 사항을 확인한 뒤 재촬영해 주세요.")
+        for b in blockers:
+            st.markdown(f"- {b}")
 
     for n in notes:
         st.warning("• " + n)
 
     # --------- Gemini 세션/보고서 ----------
     ratio_fmt = f"{ratio:.3f}" if np.isfinite(ratio) else "nan"
-    judge = '양성' if is_pos else ('음성' if np.isfinite(ratio) else '불가')
+    judge = ('양성' if is_pos else '음성') if is_valid else '판정불가'
+    if is_valid and is_borderline:
+        judge += ' (경계값, 재촬영 권장)'
     context_str = (
         f"- 상단 Iu={Iu:.2f}, 하단 Il={Il:.2f}, ratio={ratio_fmt}\n"
         f"- 판정={judge} (임계={RATIO_THR})"
@@ -577,4 +676,3 @@ if uploaded:
 
 else:
     st.info("촬영한 이미지를 업로드하면 자동 분석을 시작합니다.")
-
