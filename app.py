@@ -338,6 +338,32 @@ def overlay_visual(img_bgr, viz_items):
     return canvas
 
 # ---------------- Gemini (항상-초기화 + 안전 폴백) ----------------
+def _friendly_gemini_error(e) -> str:
+    """
+    Gemini 오류를 사용자가 읽을 수 있는 문장으로 바꾼다.
+    원본 메시지에는 quota_metric, retry_delay 같은 내부 정보가 들어 있어
+    그대로 노출하면 읽기 어렵고 불필요한 정보를 드러낸다.
+
+    판정 결과 자체는 이 함수와 무관하게 이미 표시된 상태다.
+    설명 기능만 일시적으로 사용할 수 없다는 점을 알린다.
+    """
+    msg = str(e)
+    if "429" in msg or "quota" in msg.lower():
+        return (
+            "오늘 사용할 수 있는 설명 생성 횟수를 모두 사용했습니다. "
+            "잠시 후 또는 내일 다시 시도해 주세요.\n\n"
+            "**판정 결과는 위에 표시된 내용 그대로이며, 이 기능과 무관합니다.**"
+        )
+    if "API key" in msg or "api_key" in msg or "PERMISSION" in msg.upper():
+        return (
+            "설명 생성 기능이 설정되지 않았습니다. "
+            "판정 결과는 위에 표시된 내용을 확인해 주세요."
+        )
+    return (
+        "설명을 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.\n\n"
+        "판정 결과는 위에 표시된 내용 그대로입니다."
+    )
+
 def _get_gemini_model():
     try:
         import google.generativeai as genai
@@ -395,7 +421,7 @@ def gemini_safe_reply(prompt: str, context_ko: str = "현재 이미지 컨텍스
         resp = model.generate_content(prompt)
         return getattr(resp, "text", "") or "(빈 응답)"
     except Exception as e:
-        return f"(Gemini 응답 실패: {e})"
+        return _friendly_gemini_error(e)
 
 # ----- (구) 질의 전처리: 지명/과목 뽑기 함수 (필요시 재사용 가능) -----
 def gemini_normalize_location_query(user_msg: str) -> dict:
@@ -642,7 +668,7 @@ if uploaded:
         st.session_state["gemini_report"] = gemini_safe_reply(prompt, context_ko=context_str)
 
     st.markdown("---")
-    st.subheader("💡 AI 기반 최종 분석 보고서")
+    st.subheader("💡 판정 결과 설명")
     if st.session_state["gemini_report"]:
         st.markdown(st.session_state["gemini_report"])
     else:
@@ -656,7 +682,7 @@ if uploaded:
     for role, text in st.session_state.get("chat_ui", []):
         (st.chat_message("user") if role=="user" else st.chat_message("assistant")).write(text)
 
-    user_q = st.chat_input("예: '분당 산부인과', '야탑역 산부인과', '임질 무증상도 있어?', '검사 후 뭘 해야 해?'")
+    user_q = st.chat_input("예: '결과를 자세히 설명해줘', '검사 후 뭘 해야 해?', '임질 무증상도 있어?', '○○동 근처 산부인과'")
     if user_q:
         st.session_state["chat_ui"].append(("user", user_q))
         st.chat_message("user").write(user_q)
@@ -675,4 +701,4 @@ if uploaded:
         )
 
 else:
-    st.info("촬영한 이미지를 업로드하면 자동 분석을 시작합니다.")
+    st.info("촬영한 이미지를 업로드하면 자동으로 분석을 시작합니다.")
