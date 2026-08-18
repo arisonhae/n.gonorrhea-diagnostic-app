@@ -1,368 +1,401 @@
-# roc_analysis.py
-# YOLO ROI 검출 + 형광(G-p95) 계산 → ROC curve 계산 및 저장 + ROI 시각화 저장
-# 실행 예:
-#   python "C:\n.gonorrhea_diagnostic_app\analysis_code\ROC.py" ^
-#       --weights "C:\n.gonorrhea_diagnostic_app\models\new_weights.pt"
+# -*- coding: utf-8 -*-
+"""
+roc_analysis.py
+
+목적
+    임계값에 의존하지 않는 성능 지표를 낸다.
+
+    step3 와 step4 에서 구한 정확도는 특정 임계값(221.0, 1.1162)을 전제한
+    값이다. 임계값을 바꾸면 숫자도 바뀌므로, 그 값만으로는 "신호 자체가
+    얼마나 좋은가"를 알 수 없다.
+
+    ROC 곡선은 가능한 모든 임계값을 훑으면서 민감도와 위양성률의 관계를
+    그린다. 그 아래 면적(AUC)은 임계값 선택과 무관하며,
+    "임의의 양성 표본이 임의의 음성 표본보다 높은 점수를 받을 확률"과 같다.
+
+        AUC = 0.5   무작위와 다름없음
+        AUC = 1.0   완전한 분리
+
+두 가지를 따로 본다
+    solo — G_p95 절댓값으로 양성/음성을 가른다.
+           step3 의 cutoff 가 다루는 문제다.
+
+    pair — ratio = I_sample / I_nc 로 가른다.
+           step4 의 T_ratio 가 다루는 문제이며, 실제 앱이 쓰는 방식이다.
+           neg_pos 를 양성, neg_neg 를 음성으로 놓는다.
+
+train / test 분리
+    원본은 solo train 과 test 를 합쳐서 계산했다. train 은 임계값을 정하는
+    데 쓴 데이터이므로, 합치면 평가가 낙관적이 된다.
+    여기서는 train, test, 전체를 각각 계산한다.
+
+신뢰구간
+    AUC 에도 부트스트랩 신뢰구간을 붙인다. 표본이 적으면 AUC 가 1.0 에
+    가깝게 나와도 구간이 넓을 수 있다.
+
+출력
+    results/roc/
+      ├── solo_roc_{split}.csv / .png
+      ├── pair_roc.csv / .png
+      ├── roc_values.csv          이미지별 점수와 라벨
+      └── summary.json
+
+실행
+    python analysis/roc_analysis.py
+
+원본 대비 수정 사항
+    - solo 의 train / test 를 분리해 각각 계산
+    - AUC 부트스트랩 신뢰구간 추가
+    - 임계값별 민감도·특이도 표 출력 (현재 운영값이 곡선의 어디인지)
+    - 하드코딩 경로 제거, 오버레이 저장 기본 끄기, 한글 경로 대응
+
+실행 결과 (2026-08, weights.pt)
+
+    solo · G_p95 절댓값
+        split    n    pos  neg     AUC        95% CI
+        train    80    40   40   0.9994  [0.9972, 1.0000]
+        test     30    15   15   1.0000  [1.0000, 1.0000]
+        전체    110    55   55   0.9990  [0.9960, 1.0000]
+
+    pair · ratio = I_sample / I_nc
+        n=44 (neg_pos 20, neg_neg 24)   AUC = 0.9646  [0.9027, 0.9979]
+
+    절댓값으로는 거의 완전히 갈리지만(AUC 0.999), 비율로 바꾸면 성능이
+    떨어진다(0.965). 비율은 기기 차이를 상쇄해 주는 대신 NC 튜브의 변동을
+    새로 끌어들이기 때문이다. 분모가 흔들리면 결과도 흔들린다.
+
+    이는 비율 방식이 나쁘다는 뜻이 아니다. 기기별 NC 형광값이 최대 19%
+    차이 나므로(step4 참고) 절댓값 판정은 기기를 바꾸면 무너진다.
+    비율은 그 문제를 해결하는 대신 다른 대가를 치르는 선택이며,
+    그 대가가 AUC 0.999 → 0.965 로 정량화된다.
+
+    solo test 의 AUC 1.0000 은 액면 그대로 받아들이면 안 된다. test 양성
+    15장 중 5장이 G_p95 = 255 로 포화되어 점수가 위로 몰린 결과다(step3 참고).
+    train 의 0.9994 가 더 현실적인 값이다.
+
+    pair 임계값별 민감도 / 특이도
+        T=1.0500   민감도 100.0%   특이도  83.3%
+        T=1.1162   민감도 100.0%   특이도  83.3%   ← 현재
+        T=1.1480   민감도  90.0%   특이도  83.3%
+        T=1.1800   민감도  85.0%   특이도  87.5%
+        T=1.2000   민감도  85.0%   특이도  95.8%
+
+    현재 값은 민감도를 100% 로 유지하는 구간의 위쪽 끝에 있다.
+    여기서 더 올리면 민감도가 먼저 떨어지고 특이도는 늦게 오른다.
+"""
 
 import argparse
+import csv
+import json
+import sys
 from pathlib import Path
 
 import cv2
-import numpy as np
-from ultralytics import YOLO
-from sklearn.metrics import roc_curve, auc
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.metrics import roc_curve, auc
 
-# ---------------- 공통 설정 ----------------
-IMG_EXTS = (".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import paths as P
 
-
-def log(msg: str):
-    print(str(msg), flush=True)
-
-
-def ensure_dir(p: Path) -> Path:
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+try:
+    from ultralytics import YOLO
+except ImportError as e:
+    raise SystemExit("ultralytics 가 필요합니다:  pip install ultralytics") from e
 
 
-def list_images(root: Path):
-    files = []
-    for ext in IMG_EXTS:
-        files.extend(root.rglob(f"*{ext}"))
-    return sorted(files)
+IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+N_BOOTSTRAP = 2000
+
+
+def list_images(root):
+    return sorted(p for p in Path(root).rglob("*") if p.suffix.lower() in IMG_EXTS)
+
+
+def imread_unicode(path: Path):
+    return cv2.imdecode(np.fromfile(str(path), dtype=np.uint8), cv2.IMREAD_COLOR)
 
 
 def safe_crop(img, xyxy):
     x1, y1, x2, y2 = [int(v) for v in xyxy]
-    h, w = img.shape[:2]
-    x1 = max(0, x1)
-    y1 = max(0, y1)
-    x2 = min(w - 1, x2)
-    y2 = min(h - 1, y2)
+    H, W = img.shape[:2]
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(W - 1, x2), min(H - 1, y2)
     if x2 <= x1 or y2 <= y1:
         return None
     return img[y1:y2, x1:x2]
 
 
-def g_p95_intensity(crop_bgr: np.ndarray) -> float:
-    """ROI 내부 G 채널 상위 5% (p95) intensity"""
-    if crop_bgr is None:
+def g_p95(crop):
+    if crop is None:
         return np.nan
-    g = crop_bgr[:, :, 1].astype(np.float32)
-    flat = g.reshape(-1)
-    if flat.size == 0:
-        return np.nan
-    return float(np.percentile(flat, 95))
+    g = crop[:, :, 1].astype(np.float32)
+    return float(np.percentile(g, 95.0)) if g.size else np.nan
 
 
-def center_y(box):
-    return (float(box[1]) + float(box[3])) / 2.0
+def center_y(b):
+    return (float(b[1]) + float(b[3])) / 2.0
 
 
-def solo_label_from_path(p: Path) -> str | None:
-    low = str(p).lower()
-    if "\\pos\\" in low or "/pos/" in low:
+def solo_label(path):
+    low = str(path).lower().replace("\\", "/")
+    if "/pos/" in low:
         return "pos"
-    if "\\neg\\" in low or "/neg/" in low:
+    if "/neg/" in low:
         return "neg"
     return None
 
 
-# ---------------- ROC 계산 및 저장 ----------------
-def save_roc_curve(out_prefix: Path, scores: np.ndarray, labels: np.ndarray, title: str):
-    """
-    out_prefix: 확장자 제외 경로 (예: out_dir / 'solo_roc_curve')
-    scores: 예측 score (연속값)
-    labels: 0/1 라벨
-    """
-    out_csv = out_prefix.with_suffix(".csv")
-    out_png = out_prefix.with_suffix(".png")
+def auc_of(scores, labels):
+    if len(np.unique(labels)) < 2:
+        return np.nan
+    fpr, tpr, _ = roc_curve(labels, scores)
+    return float(auc(fpr, tpr))
 
+
+def bootstrap_auc_ci(scores, labels, n=N_BOOTSTRAP, seed=0):
+    rng = np.random.default_rng(seed)
+    scores, labels = np.asarray(scores, float), np.asarray(labels, int)
+    if len(scores) < 6:
+        return None
+    out = []
+    for _ in range(n):
+        idx = rng.integers(0, len(scores), len(scores))
+        s, l = scores[idx], labels[idx]
+        if len(np.unique(l)) < 2:
+            continue
+        out.append(auc_of(s, l))
+    if len(out) < n * 0.5:
+        return None
+    lo, hi = np.percentile(out, [2.5, 97.5])
+    return {"lo": float(lo), "hi": float(hi), "n_boot": len(out)}
+
+
+def save_roc(out_prefix: Path, scores, labels, title: str, mark=None):
+    """
+    mark: (임계값, 라벨) — 현재 운영값이 곡선의 어디인지 표시한다.
+    """
+    scores, labels = np.asarray(scores, float), np.asarray(labels, int)
     if len(scores) == 0 or len(np.unique(labels)) < 2:
-        log(f"[WARN] {title} 라벨 종류가 2개 미만이거나 샘플이 0개라 ROC/AUC 계산 불가.")
-        import csv
-        with open(out_csv, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["fpr", "tpr", "threshold", "auc", "n_neg", "n_pos"])
-        return
+        return None
 
-    # ROC 계산
-    fpr, tpr, thresholds = roc_curve(labels, scores)
-    roc_auc = auc(fpr, tpr)
-    n_neg = int(np.sum(labels == 0))
-    n_pos = int(np.sum(labels == 1))
+    fpr, tpr, thr = roc_curve(labels, scores)
+    a = float(auc(fpr, tpr))
+    ci = bootstrap_auc_ci(scores, labels)
 
-    # CSV 저장
-    import csv
-    with open(out_csv, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["fpr", "tpr", "threshold", "auc", "n_neg", "n_pos"])
-        for ff, tt, th in zip(fpr, tpr, thresholds):
-            writer.writerow([ff, tt, th, roc_auc, n_neg, n_pos])
+    with open(out_prefix.with_suffix(".csv"), "w", newline="",
+              encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(["fpr", "tpr", "threshold"])
+        w.writerows(zip(fpr, tpr, thr))
 
-    log(f"[ROC] 저장 완료: {out_csv} (AUC={roc_auc:.4f}, neg={n_neg}, pos={n_pos})")
-
-    # PNG 저장
-    fig, ax = plt.subplots(figsize=(6, 5))
-    ax.plot(fpr, tpr, linewidth=2, label=f"AUC = {roc_auc:.3f}")
+    fig, ax = plt.subplots(figsize=(5.5, 5))
+    lbl = f"AUC = {a:.3f}"
+    if ci:
+        lbl += f"\n95% CI [{ci['lo']:.3f}, {ci['hi']:.3f}]"
+    ax.plot(fpr, tpr, linewidth=2, label=lbl)
     ax.plot([0, 1], [0, 1], "k--", linewidth=1, label="Random")
-    ax.set_xlabel("False Positive Rate (1 - Specificity)")
-    ax.set_ylabel("True Positive Rate (Sensitivity)")
+
+    if mark is not None:
+        T, name = mark
+        i = int(np.argmin(np.abs(thr - T)))
+        ax.plot(fpr[i], tpr[i], "o", markersize=9, color="crimson",
+                label=f"{name} (T={T:g})")
+
+    ax.set_xlabel("False Positive Rate  (1 - Specificity)")
+    ax.set_ylabel("True Positive Rate  (Sensitivity)")
     ax.set_title(title)
-    ax.legend(loc="lower right")
-    ax.grid(True, alpha=0.3)
+    ax.legend(loc="lower right", fontsize=9)
+    ax.grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig(out_png, dpi=300)
+    fig.savefig(out_prefix.with_suffix(".png"), dpi=200)
     plt.close(fig)
 
-    log(f"[ROC] 곡선 이미지 저장 완료: {out_png}")
+    return {"auc": a, "ci": ci, "n": len(scores),
+            "n_pos": int((labels == 1).sum()), "n_neg": int((labels == 0).sum()),
+            "fpr": fpr, "tpr": tpr, "thr": thr}
 
 
-# ---------------- 메인 ----------------
+def print_operating_point(res, T, name):
+    """현재 운영 임계값이 곡선의 어느 지점인지 보여준다."""
+    if res is None:
+        return
+    thr = res["thr"]
+    i = int(np.argmin(np.abs(thr - T)))
+    print(f"    {name} T={T:g} 에서  민감도 {res['tpr'][i]*100:5.1f}%  "
+          f"특이도 {(1-res['fpr'][i])*100:5.1f}%")
+
+
 def main():
-    ap = argparse.ArgumentParser()
-
-    # 입력 경로
-    ap.add_argument(
-        "--weights",
-        required=True,
-        help="YOLO 가중치 경로 (예: C:\\n.gonorrhea_diagnostic_app\\models\\new_weights.pt)",
-    )
-    ap.add_argument(
-        "--solo_train_root",
-        default=r"C:\n.gonorrhea_diagnostic_app\dataset\solo\train",
-    )
-    ap.add_argument(
-        "--solo_test_root",
-        default=r"C:\n.gonorrhea_diagnostic_app\dataset\solo\test",
-    )
-    ap.add_argument(
-        "--pair_negneg_root",
-        default=r"C:\n.gonorrhea_diagnostic_app\dataset\pair\neg_neg",
-    )
-    ap.add_argument(
-        "--pair_negpos_root",
-        default=r"C:\n.gonorrhea_diagnostic_app\dataset\pair\neg_pos",
-    )
-    ap.add_argument(
-        "--out_dir",
-        default=r"C:\n.gonorrhea_diagnostic_app\analysis_output\ROC",
-        help="ROC 결과 저장 폴더",
-    )
-
-    # YOLO 추론 설정
-    ap.add_argument("--conf", type=float, default=0.70)
-    ap.add_argument("--iou", type=float, default=0.50)
-    ap.add_argument("--imgsz", type=int, default=640)
-    ap.add_argument("--device", type=str, default="", help="빈칸이면 자동 선택")
-
-    ap.add_argument(
-        "--max_per_set",
-        type=int,
-        default=0,
-        help="디버깅용: 각 세트에서 앞 N장만 사용 (0이면 전부)",
-    )
-
-    # viz 저장 여부
-    ap.add_argument(
-        "--save_viz",
-        action="store_true",
-        help="ROI 검출 결과 이미지를 viz 폴더에 저장",
-    )
-
+    ap = argparse.ArgumentParser(description="ROC / AUC 분석")
+    ap.add_argument("--weights", default=str(P.WEIGHTS_PATH))
+    ap.add_argument("--solo_train_root", default=str(P.SOLO_TRAIN))
+    ap.add_argument("--solo_test_root", default=str(P.SOLO_TEST))
+    ap.add_argument("--pair_negpos_root", default=str(P.PAIR_NEGPOS))
+    ap.add_argument("--pair_negneg_root", default=str(P.PAIR_NEGNEG))
+    ap.add_argument("--out_dir", default=str(P.OUT_ROC))
+    ap.add_argument("--iou", type=float, default=P.IOU)
+    ap.add_argument("--imgsz", type=int, default=P.IMG_SIZE)
+    ap.add_argument("--device", default="")
     args = ap.parse_args()
-    out_dir = ensure_dir(Path(args.out_dir))
 
-    # viz 폴더 준비
-    if args.save_viz:
-        viz_root = ensure_dir(out_dir / "viz")
-        viz_solo_pos = ensure_dir(viz_root / "solo_pos")
-        viz_solo_neg = ensure_dir(viz_root / "solo_neg")
-        viz_pair_nn = ensure_dir(viz_root / "pair_negneg")
-        viz_pair_np = ensure_dir(viz_root / "pair_negpos")
-    else:
-        viz_root = viz_solo_pos = viz_solo_neg = viz_pair_nn = viz_pair_np = None
+    CONF = P.CONF_MIN
+    out_dir = P.ensure_dir(Path(args.out_dir))
+    P.check(Path(args.weights), Path(args.solo_train_root), Path(args.pair_negpos_root))
 
-    log("=== ROC.py: G-p95 / Tratio 기반 ROC 계산 ===")
-    log(f"[CONFIG] conf={args.conf}, iou={args.iou}, imgsz={args.imgsz}")
-    log(f"[OUT_DIR] {out_dir}")
+    print("=" * 66)
+    print("ROC / AUC · 임계값에 의존하지 않는 성능 지표")
+    print("=" * 66)
+    print(f"  가중치 : {Path(args.weights).name}")
+    print(f"  설정   : conf={CONF}, G채널 p95")
+    print(f"  출력   : {out_dir}")
+    print()
 
-    # ----- YOLO 로드 -----
-    log("[MODEL] YOLO 가중치 로드 중...")
-    model = YOLO(args.weights)
+    model = YOLO(str(args.weights))
     names = model.model.names if hasattr(model.model, "names") else model.names
+    roi_id = next(k for k, v in names.items() if str(v).lower() == "roi")
 
-    # tube / roi 클래스 id 찾기
-    try:
-        tube_cls = [k for k, v in names.items() if str(v).lower() == "tube"][0]
-        roi_cls = [k for k, v in names.items() if str(v).lower() == "roi"][0]
-    except Exception:
-        raise RuntimeError(f"클래스 이름 'tube' 또는 'roi'를 찾지 못했습니다. names={names}")
-
-    log(f"[MODEL] Classes: tube={tube_cls}, roi={roi_cls}")
-
-    def infer_one(path: Path):
-        res = model.predict(
-            source=str(path),
-            imgsz=args.imgsz,
-            conf=args.conf,
-            iou=args.iou,
-            device=args.device,
-            verbose=False,
-        )[0]
-        img = cv2.imread(str(path))
+    def detect_rois(path: Path):
+        img = imread_unicode(path)
         if img is None:
-            return None, [], [], None
-        tubes, rois = [], []
-        if res.boxes is not None and len(res.boxes) > 0:
-            boxes = res.boxes.xyxy.cpu().numpy()
-            cls_ids = res.boxes.cls.cpu().numpy().astype(int)
-            for b, c in zip(boxes, cls_ids):
-                if c == tube_cls:
-                    tubes.append(b)
-                elif c == roi_cls:
-                    rois.append(b)
-        return img, tubes, rois, res
+            return None, []
+        r = model.predict(source=img, imgsz=args.imgsz, conf=CONF,
+                          iou=args.iou, device=args.device, verbose=False)[0]
+        rois = [b for b, c in zip(r.boxes.xyxy.cpu().numpy(),
+                                  r.boxes.cls.cpu().numpy().astype(int))
+                if c == roi_id]
+        return img, rois
 
-    # viz 저장 함수
-    def save_viz_image(img, tubes, rois, out_path: Path):
-        if img is None:
-            return
-        vis = img.copy()
-        # tube 박스는 초록, ROI 박스는 핑크
-        for b in tubes:
-            x1, y1, x2, y2 = [int(v) for v in b]
-            cv2.rectangle(vis, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        for b in rois:
-            x1, y1, x2, y2 = [int(v) for v in b]
-            cv2.rectangle(vis, (x1, y1), (x2, y2), (255, 0, 255), 2)
-        cv2.imwrite(str(out_path), vis)
+    rows = []
 
-    # ================= SOLO: G_p95 절댓값 ROC =================
-    solo_scores = []
-    solo_labels = []
-
-    train_root = Path(args.solo_train_root)
-    test_root = Path(args.solo_test_root)
-    solo_imgs = list_images(train_root) + list_images(test_root)
-    if args.max_per_set > 0:
-        solo_imgs = solo_imgs[: args.max_per_set]
-
-    log(f"[SOLO] images: {len(solo_imgs)}")
+    # ================= SOLO =================
+    print("[1/2] solo · G_p95 절댓값")
+    train_resolved = Path(args.solo_train_root).resolve()
+    solo_imgs = list_images(args.solo_train_root) + list_images(args.solo_test_root)
 
     for i, ip in enumerate(solo_imgs, 1):
-        if (i == 1) or (i % 10 == 0) or (i == len(solo_imgs)):
-            log(f"[SOLO] {i}/{len(solo_imgs)}: {ip}")
-
-        label_str = solo_label_from_path(ip)
-        if label_str not in {"neg", "pos"}:
+        lab = solo_label(ip)
+        if lab is None:
             continue
-        label_int = 1 if label_str == "pos" else 0
-
-        img, tubes, rois, res = infer_one(ip)
-        if img is None or len(rois) == 0:
+        img, rois = detect_rois(ip)
+        if img is None or not rois:
             continue
-
-        vals = []
-        for r in rois:
-            crop = safe_crop(img, r)
-            vals.append(g_p95_intensity(crop))
+        vals = [g_p95(safe_crop(img, b)) for b in rois]
         vals = [v for v in vals if np.isfinite(v)]
         if not vals:
             continue
+        rows.append({
+            "dataset": "solo",
+            "split": "train" if train_resolved in ip.resolve().parents else "test",
+            "image_id": ip.stem, "label": lab, "y": 1 if lab == "pos" else 0,
+            "score": f"{float(np.max(vals)):.6f}",
+        })
+        if i % 30 == 0 or i == len(solo_imgs):
+            print(f"    {i}/{len(solo_imgs)}")
 
-        score = float(np.max(vals))  # 이미지 내 가장 밝은 튜브의 G_p95 사용
-        solo_scores.append(score)
-        solo_labels.append(label_int)
+    # ================= PAIR =================
+    print("\n[2/2] pair · ratio = I_sample / I_nc")
 
-        # viz 저장
-        if args.save_viz:
-            if label_str == "pos":
-                out_viz = viz_solo_pos / ip.name
-            else:
-                out_viz = viz_solo_neg / ip.name
-            save_viz_image(img, tubes, rois, out_viz)
+    def scan_pair(root, group, y):
+        imgs = list_images(root)
+        print(f"    {group}: {len(imgs)}장")
+        for ip in imgs:
+            img, rois = detect_rois(ip)
+            if img is None or len(rois) < 2:
+                continue
+            rs = sorted(rois, key=center_y)
+            Iu, Il = g_p95(safe_crop(img, rs[0])), g_p95(safe_crop(img, rs[1]))
+            if not (np.isfinite(Iu) and np.isfinite(Il) and Iu > 0):
+                continue
+            rows.append({"dataset": "pair", "split": group,
+                         "image_id": ip.stem,
+                         "label": "pos" if y else "neg", "y": y,
+                         "score": f"{Il / Iu:.6f}"})
 
-    solo_scores = np.array(solo_scores, dtype=float)
-    solo_labels = np.array(solo_labels, dtype=int)
-    log(f"[SOLO] 유효 샘플 수: {len(solo_scores)}")
+    scan_pair(args.pair_negpos_root, "neg_pos", 1)
+    if Path(args.pair_negneg_root).exists():
+        scan_pair(args.pair_negneg_root, "neg_neg", 0)
 
-    save_roc_curve(
-        out_dir / "solo_roc_curve",
-        solo_scores,
-        solo_labels,
-        title="ROC Curve – Solo (G_p95 intensity)",
-    )
+    with open(out_dir / "roc_values.csv", "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        w.writeheader(); w.writerows(rows)
 
-    # ================= PAIR: Tratio ROC (위=NC, 아래=Sample) =================
-    pair_scores = []
-    pair_labels = []
+    # ================= 계산 =================
+    def pick(dataset, split=None):
+        sub = [r for r in rows if r["dataset"] == dataset
+               and (split is None or r["split"] == split)]
+        return (np.array([float(r["score"]) for r in sub]),
+                np.array([int(r["y"]) for r in sub]))
 
-    negneg_root = Path(args.pair_negneg_root)
-    negpos_root = Path(args.pair_negpos_root)
+    summary = {}
 
-    nn_imgs = list_images(negneg_root)
-    np_imgs = list_images(negpos_root)
+    print()
+    print("=" * 66)
+    print("solo · G_p95 절댓값 기준")
+    print("=" * 66)
+    for split, name in ((None, "all"), ("train", "train"), ("test", "test")):
+        s, y = pick("solo", split)
+        if len(s) == 0 or len(np.unique(y)) < 2:
+            continue
+        res = save_roc(out_dir / f"solo_roc_{name}", s, y,
+                       f"ROC · solo {name} (G_p95)",
+                       mark=(P.ABS_NEG_CUTOFF, "step3 cutoff"))
+        ci = res["ci"]
+        print(f"  [{name:5s}] n={res['n']:3d} (pos {res['n_pos']}, neg {res['n_neg']})  "
+              f"AUC = {res['auc']:.4f}"
+              + (f"   95% CI [{ci['lo']:.4f}, {ci['hi']:.4f}]" if ci else ""))
+        print_operating_point(res, P.ABS_NEG_CUTOFF, "step3 cutoff")
+        summary[f"solo_{name}"] = {"auc": res["auc"], "ci": ci,
+                                   "n_pos": res["n_pos"], "n_neg": res["n_neg"]}
 
-    if args.max_per_set > 0:
-        nn_imgs = nn_imgs[: args.max_per_set]
-        np_imgs = np_imgs[: args.max_per_set]
+    print()
+    print("=" * 66)
+    print("pair · ratio 기준  (앱이 실제로 쓰는 방식)")
+    print("=" * 66)
+    s, y = pick("pair")
+    if len(s) and len(np.unique(y)) == 2:
+        res = save_roc(out_dir / "pair_roc", s, y,
+                       "ROC · pair (ratio = sample / NC)",
+                       mark=(P.RATIO_THR, "T_ratio"))
+        ci = res["ci"]
+        print(f"  n={res['n']} (neg_pos {res['n_pos']}, neg_neg {res['n_neg']})  "
+              f"AUC = {res['auc']:.4f}"
+              + (f"   95% CI [{ci['lo']:.4f}, {ci['hi']:.4f}]" if ci else ""))
+        print_operating_point(res, P.RATIO_THR, "T_ratio")
+        summary["pair"] = {"auc": res["auc"], "ci": ci,
+                           "n_pos": res["n_pos"], "n_neg": res["n_neg"]}
 
-    log(f"[PAIR] neg_neg images: {len(nn_imgs)}")
-    log(f"[PAIR] neg_pos images: {len(np_imgs)}")
+        # 곡선 위 몇 지점을 표로
+        print()
+        print("    임계값별 민감도 / 특이도")
+        thr, tpr, fpr = res["thr"], res["tpr"], res["fpr"]
+        seen = set()
+        for t in (1.05, 1.08, 1.10, 1.1162, 1.148, 1.18, 1.20):
+            i = int(np.argmin(np.abs(thr - t)))
+            if i in seen:
+                continue
+            seen.add(i)
+            tag = ""
+            if abs(t - P.RATIO_THR) < 1e-6:
+                tag = "  ← 현재"
+            print(f"      T={t:<7.4f}  민감도 {tpr[i]*100:5.1f}%   "
+                  f"특이도 {(1-fpr[i])*100:5.1f}%{tag}")
+    else:
+        print("  음성 pair 가 없어 계산 불가")
 
-    def process_pair_image(ip: Path, pair_type: str, label_int: int):
-        img, tubes, rois, res = infer_one(ip)
-        if img is None or len(rois) < 2:
-            return
+    (out_dir / "summary.json").write_text(
+        json.dumps({"settings": {"conf": CONF, "method": "G", "metric": "p95"},
+                    "results": summary}, indent=2, ensure_ascii=False),
+        encoding="utf-8")
 
-        # y center 기준으로 정렬 → 위: NC, 아래: Sample
-        rois_sorted = sorted(rois, key=center_y)
-        upper_roi = rois_sorted[0]      # NC
-        lower_roi = rois_sorted[-1]     # Sample
-
-        I_nc = g_p95_intensity(safe_crop(img, upper_roi))
-        I_sm = g_p95_intensity(safe_crop(img, lower_roi))
-        if not (np.isfinite(I_nc) and np.isfinite(I_sm) and I_nc > 0):
-            return
-
-        tratio = float(I_sm / I_nc)
-        pair_scores.append(tratio)
-        pair_labels.append(label_int)
-
-        # viz 저장
-        if args.save_viz:
-            if pair_type == "neg_neg":
-                out_dir_viz = viz_pair_nn
-            else:
-                out_dir_viz = viz_pair_np
-            save_viz_image(img, tubes, rois, out_dir_viz / ip.name)
-
-    # neg_neg → label 0 (음성)
-    for i, ip in enumerate(nn_imgs, 1):
-        if (i == 1) or (i % 5 == 0) or (i == len(nn_imgs)):
-            log(f"[PAIR neg_neg] {i}/{len(nn_imgs)}: {ip}")
-        process_pair_image(ip, "neg_neg", 0)
-
-    # neg_pos → label 1 (양성)
-    for i, ip in enumerate(np_imgs, 1):
-        if (i == 1) or (i % 5 == 0) or (i == len(np_imgs)):
-            log(f"[PAIR neg_pos] {i}/{len(np_imgs)}: {ip}")
-        process_pair_image(ip, "neg_pos", 1)
-
-    pair_scores = np.array(pair_scores, dtype=float)
-    pair_labels = np.array(pair_labels, dtype=int)
-    log(f"[PAIR] 유효 샘플 수: {len(pair_scores)} (neg={np.sum(pair_labels==0)}, pos={np.sum(pair_labels==1)})")
-
-    save_roc_curve(
-        out_dir / "pair_roc_curve",
-        pair_scores,
-        pair_labels,
-        title="ROC Curve – Pair (Tratio = Sample / NC)",
-    )
-
-    log("=== ROC.py 완료: CSV, PNG, (옵션) viz 저장됨 ===")
+    print()
+    print("=" * 66)
+    print("  AUC 는 임계값 선택과 무관한 지표다.")
+    print("  임계값에 의존하는 정확도보다 신호 자체의 품질을 보여준다.")
+    print("=" * 66)
+    print(f"\n[저장] {out_dir}")
 
 
 if __name__ == "__main__":

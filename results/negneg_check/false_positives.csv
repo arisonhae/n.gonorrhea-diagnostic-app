@@ -1,0 +1,5 @@
+﻿group,image_id,image_path,I_nc,I_sample,ratio,sat_nc,sat_sample,pred,correct,note
+neg_neg,neg_neg_21,C:\n.gonorrhea_diagnostic_app\dataset\pair\neg_neg\neg_neg_21.jpg,161.0000,186.0000,1.155280,0.0000,0.0000,pos,False,
+neg_neg,neg_neg_22,C:\n.gonorrhea_diagnostic_app\dataset\pair\neg_neg\neg_neg_22.jpg,183.0000,215.0000,1.174863,0.0000,0.0000,pos,False,
+neg_neg,neg_neg_23,C:\n.gonorrhea_diagnostic_app\dataset\pair\neg_neg\neg_neg_23.jpg,184.0000,224.0000,1.217391,0.0000,0.0000,pos,False,
+neg_neg,neg_neg_24,C:\n.gonorrhea_diagnostic_app\dataset\pair\neg_neg\neg_neg_24.jpg,180.0000,214.0000,1.188889,0.0000,0.0000,pos,False,
