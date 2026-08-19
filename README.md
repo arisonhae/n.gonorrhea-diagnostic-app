@@ -2,6 +2,8 @@
 
 스마트폰 기반 임질 진단 시스템
 
+**[앱 실행하기](https://APP_URL.streamlit.app)** · [샘플 이미지로 바로 테스트](data/samples/)
+
 LAMP-CRISPR 형광 반응 결과를 스마트폰으로 촬영해 자동 판독한다.
 YOLOv8로 튜브와 반응 영역(ROI)을 검출하고, ROI의 형광 강도 비율로 양성/음성을 판정한다.
 
@@ -25,7 +27,7 @@ YOLOv8로 튜브와 반응 영역(ROI)을 검출하고, ROI의 형광 강도 비
 ```
 사진 입력
    ↓
-YOLOv8 검출 (클래스: tube, roi / conf ≥ 0.70)
+YOLOv8 검출 (클래스: roi, tube / conf ≥ 0.70)
    ↓
 튜브 내부에 완전히 포함된 ROI만 매칭, 튜브당 최고 conf ROI 1개 선택
    ↓
@@ -100,17 +102,18 @@ G채널을 쓰는 이유는 FAM 형광의 발광 파장이 녹색 영역이기 �
 │   ├── step4_ratio_threshold.py          비율 판정 임계값
 │   │
 │   ├── roc_analysis.py                   ROC / AUC
-│   └── negneg_false_positive_check.py    음성-음성 쌍 위양성 확인
+│   ├── negneg_false_positive_check.py    음성-음성 쌍 위양성 확인
+│   └── pilot/                            촬영 조건 최적화 실험
 │
-├── data/README.md              데이터셋 구조 설명
+├── data/samples/               예시 이미지 9장 + 기대 결과
 ├── results/                    분석 결과 (csv, json, 그래프)
 ├── requirements.txt            웹앱 실행용
 └── requirements-analysis.txt   분석 스크립트 추가 패키지
 ```
 
-`step1`~`step4`는 순서대로 이어지는 파이프라인이고, 아래 두 개는
-파이프라인 밖에서 결과를 평가하는 도구다. 후자는 논문 제출 이후
-추가로 수행한 검증이다.
+`step1`~`step4`는 순서대로 이어지는 파이프라인이고, `roc_analysis` 와
+`negneg_false_positive_check` 는 파이프라인 밖에서 결과를 평가하는 도구다.
+후자는 논문 제출 이후 추가로 수행한 검증이다.
 
 원본 이미지는 용량 문제로 저장소에 포함하지 않았다.
 구조와 촬영 조건은 [data/README.md](data/README.md)를 참고하면 된다.
@@ -126,12 +129,14 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Gemini 리포트 기능을 쓰려면 `.streamlit/secrets.toml`에 API 키가 필요하다.
-없어도 앱은 실행되며, 리포트와 병원 검색 기능만 비활성화된다.
+Gemini 설명 기능을 쓰려면 `.streamlit/secrets.toml`에 API 키가 필요하다.
+없어도 앱은 실행되며, 설명과 병원 검색 기능만 비활성화된다.
 
 ```toml
 GEMINI_API_KEY = "..."
 ```
+
+`data/samples/` 의 이미지를 올리면 각 케이스의 동작을 바로 확인할 수 있다.
 
 ### 분석 파이프라인
 
@@ -166,7 +171,21 @@ python analysis/negneg_false_positive_check.py
 - 클래스: `roi`, `tube` — **2개** (논문 기재 3개와 다르다)
 - 학습: 300 epoch 설정, patience 90으로 **213 epoch에서 조기 종료** (best는 123 epoch)
 - 입력 크기: 640, seed 0
-- 데이터셋 관리: Roboflow
+- ultralytics 8.3.171, 학습 시각 2025-11-04
+
+### 학습 데이터셋
+
+Roboflow `hajamboree/tube_detection-thlv6` **v8** (2025-11-04, 700장).
+
+- 원본 244개를 train 149 / valid 47 / test 48 로 분할
+- train 에만 증강 적용 (회전 ±15°, 밝기 ±15%) → 600장
+- valid 50장, test 50장은 원본 그대로
+
+분할을 직접 확인한 결과 **동일 원본이 여러 split 에 들어간 사례는 없었다.**
+파일명 앞부분이 겹치는 경우가 있으나 서로 다른 이미지다.
+
+Roboflow 보고 성능은 mAP@50 99.9%, Precision 99.1%, Recall 100%, F1 99.6% 다.
+논문에 기재된 mAP@50 99.0% 는 실제 값과 다르다.
 
 검출 모델은 양성/음성을 판별하지 않는다. 튜브와 ROI의 위치만 찾고,
 판정은 전적으로 ROI의 형광값 비율로 이루어진다.
@@ -208,8 +227,10 @@ python analysis/negneg_false_positive_check.py
 **실제 임상 검체가 아닌 합성 표적 DNA로 검증했다.** 진단 도구가 아니라
 개념 검증(proof-of-concept) 수준이다.
 
-**촬영 조건 최적화 실험 일부는 조건당 n=1로 수행되어** 통계적 비교의 근거가
-되기 어렵다.
+**촬영 조건 최적화 실험은 조건당 2~20장으로 수행했으나** 대부분의 조건에서
+통계적 유의성을 확보하지 못했다. 조명 강도는 세 조건 모두 p > 0.05 였고,
+배율은 2x 에서만 p < 0.05 였다. 자세한 내용은
+[analysis/pilot/README.md](analysis/pilot/README.md) 참고.
 
 ### 통계적 한계
 
@@ -227,12 +248,6 @@ python analysis/negneg_false_positive_check.py
 기준선을 넘으므로 사실상 자동 정답이 된다. 기본 조건 이미지만으로 계산하면
 정확도는 96.7%가 아니라 95.0%다.
 
-### 데이터 분할
-
-**YOLO 학습 데이터를 이미지 단위로 분할했다.** 같은 튜브를 여러 각도·조건으로
-촬영한 이미지가 train과 test에 나뉘어 들어갔을 가능성이 있으며, 이 경우
-검출 성능이 낙관적으로 평가된다. 시료 단위 재분할이 필요하다.
-
 ### 시스템 견고성
 
 **판정 마진이 측정 변동과 비슷한 크기다.** 양성 판정 마진은 약 11.6%인데,
@@ -244,11 +259,12 @@ python analysis/negneg_false_positive_check.py
 이 때문에 정상 이미지 3장이 검출 임계값(0.70)에 미달해 판정에서 제외됐다.
 학습 데이터에 해당 기기 이미지를 보강해 재학습하는 것이 근본 해결이다.
 
-**위쪽 튜브의 QC 경고는 절대 기준을 쓴다.** Galaxy Note 8의 NC 평균이
-209.2로 경고 기준(221.0)에 근접해, 기기에 따라 오작동할 수 있다.
-
-**위쪽 튜브 판정이 검증되지 않았다.** 검증 데이터에 위쪽이 양성인
-이미지가 없어, 해당 경로의 정확도를 확인할 수 없다.
+**위쪽 튜브 QC 가 절대 기준 하나에 의존한다.** 검증 데이터에 위쪽이 양성인
+이미지가 없어 이 경로의 정확도를 확인할 수 없다. 실제로 위쪽에 양성을 놓은
+이미지([data/samples/limitation_upper_pos_lower_half.jpg](data/samples/))에서
+상단 밝기가 217로 경고 기준(221.0)에 4만큼 미달해 안전장치가 작동하지 않았고,
+판정이 그대로 출력됐다. 정상 음성 쌍의 상단이 202~203이므로 기준을 낮추면
+정상 이미지까지 걸린다.
 
 ### 촬영 품질 검증
 
@@ -267,4 +283,6 @@ pair를 전제하는 현재 판정 방식에서는 품질과 무관하게 판정
 
 - [CHANGELOG.md](CHANGELOG.md) — 논문 제출 이후 변경 사항과 근거
 - [data/README.md](data/README.md) — 데이터셋 구조, 촬영 조건, 라벨 규칙
+- [data/samples/README.md](data/samples/README.md) — 예시 이미지 9장의 기대 결과
+- [analysis/pilot/README.md](analysis/pilot/README.md) — 촬영 조건 최적화 실험
 - [results/README.md](results/README.md) — 분석 결과 폴더 구조
