@@ -5,13 +5,17 @@ paths.py
 
 기존 스크립트들은 C:\\n.gonorrhea_diagnostic_app\\... 을 하드코딩하고 있었다.
 그 경우 다른 컴퓨터에서는 전부 실패하므로, 경로를 여기 한 곳에서만 정의한다.
+(analysis/pilot/ 의 스크립트는 아직 이관되지 않아 절대 경로가 남아 있다.)
 
 데이터 위치는 환경변수 NGD_DATA_ROOT 로 지정한다.
 지정하지 않으면 저장소 안의 data/ 를 본다.
 
     Windows :  [Environment]::SetEnvironmentVariable(
-                   "NGD_DATA_ROOT", "C:\\n.gonorrhea_diagnostic_app", "User")
+                   "NGD_DATA_ROOT", "C:\\ngd_data", "User")
     Linux   :  export NGD_DATA_ROOT=/data/ngd
+
+지정한 폴더 아래에 dataset/ 이 있어야 한다. 즉 위 예시라면
+C:\\ngd_data\\dataset\\solo\\train\\neg 와 같은 구조다.
 
 사용 예
     from paths import SOLO_TRAIN, WEIGHTS_PATH, RESULTS_DIR, ensure_dir
@@ -70,6 +74,8 @@ DEVICE_SETS = {
 }
 
 # ---- 저장소 안 예시 이미지 ----
+#   이것만은 DATA_DIR 이 아니라 항상 저장소를 본다.
+#   NGD_DATA_ROOT 설정 없이도 앱과 샘플이 동작해야 하기 때문이다.
 SAMPLES = REPO_ROOT / "data" / "samples"
 
 # ------------------------------------------------------------------
@@ -78,7 +84,10 @@ SAMPLES = REPO_ROOT / "data" / "samples"
 MODELS_DIR = REPO_ROOT / "models"
 WEIGHTS_PATH = MODELS_DIR / "weights.pt"
 
-# 파일명 변경 전 호환 (weights.pt 가 없으면 new_weights.pt 를 찾는다)
+# 제출 당시 폴더에는 weights.pt (v2, 1클래스) 와 new_weights.pt (v8, 2클래스) 가
+# 함께 있었고, 실제로 사용한 것은 후자다. 이 저장소의 models/weights.pt 는
+# new_weights.pt 를 옮기며 이름을 바꾼 파일이다.
+# 아래는 옛 파일명을 그대로 둔 환경을 위한 호환 처리다.
 if not WEIGHTS_PATH.exists():
     _legacy = MODELS_DIR / "new_weights.pt"
     if _legacy.exists():
@@ -103,8 +112,16 @@ OUT_NEGNEG = RESULTS_DIR / "negneg_check"
 CONF_MIN = 0.70          # step1: confidence 스윕으로 선정
 IOU = 0.50
 IMG_SIZE = 640
-ABS_NEG_CUTOFF = 221.0   # step3: 음성 기준선 (G-p95 절댓값)
-RATIO_THR = 1.1162        # step4: 양성 판정 비율 (Il/Iu) (사용한 이미지: neg_pos + neg_neg pair (기존 1.148은 neg_pos만 상))
+
+# step3: 음성 기준선 (G-p95 절댓값). train 음성 40장의 99.7 백분위수.
+ABS_NEG_CUTOFF = 221.0
+
+# step4: 양성 판정 비율 (Il / Iu).
+#   ABS_NEG_CUTOFF / median(pair NC) = 221.0 / 198.0
+#   기준 분포는 neg_pos + neg_neg 를 합친 pair NC 44장이다.
+#   논문 제출본의 1.148 은 neg_pos 20장만으로 구한 값이며,
+#   변경 근거는 CHANGELOG.md 를 참고한다.
+RATIO_THR = 1.1162
 
 
 # ------------------------------------------------------------------
@@ -136,7 +153,9 @@ if __name__ == "__main__":
     print(f"REPO_ROOT   : {REPO_ROOT}")
     print(f"DATA_DIR    : {DATA_DIR}")
     print(f"  (환경변수 NGD_DATA_ROOT = {os.environ.get('NGD_DATA_ROOT', '미설정')})")
-    print(f"  (환경변수 NGD_ROOT      = {os.environ.get('NGD_ROOT', '미설정')})")
+    if not _env_root:
+        print("  NGD_DATA_ROOT 가 없어 저장소 안의 data/ 를 봅니다.")
+        print("  분석 스크립트를 돌리려면 이미지 데이터 위치를 지정해야 합니다.")
     print()
 
     targets = [
@@ -147,9 +166,12 @@ if __name__ == "__main__":
         ("pair/neg_pos", PAIR_NEGPOS),
         ("pair/neg_neg", PAIR_NEGNEG),
         ("qc_test/error_splash", QC_SPLASH),
+        ("qc_test/error_blur", QC_BLUR),
+        ("qc_test/error_light", QC_LIGHT),
         ("test_all/galaxynote8", TEST_GALAXY_NOTE8),
         ("test_all/iphone13", TEST_IPHONE13),
         ("test_all/iphone13pro", TEST_IPHONE13PRO),
+        ("data/samples", SAMPLES),
         ("models/weights", WEIGHTS_PATH),
     ]
 
