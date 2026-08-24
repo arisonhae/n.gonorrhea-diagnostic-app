@@ -25,11 +25,15 @@ step4_ratio_threshold.py
 
     세 값 모두 부트스트랩 신뢰구간을 함께 산출해 서로 구분되는지 확인한다.
 
+    임계값 도출과 별개로, solo 단독 촬영과 pair 상단 NC 의 신호 수준을
+    비교해 기록한다(논문 2.8.5). 두 좌표계를 잇는 것이 T_ratio 이므로
+    그 전제에 해당하며, 임계값 계산에는 관여하지 않는다.
+
 출력
     results/step4_ratio/
       ├── solo_analysis.csv          solo 이미지별 I
       ├── pair_analysis.csv          pair 이미지별 I_nc, I_sample, ratio
-      ├── threshold_derivation.json  A/B 두 방식의 임계값과 CI
+      ├── threshold_derivation.json  A/B 임계값과 CI, solo/pair 신호 비교
       ├── test_all_eval.csv          기기별 최종 검증 결과
       └── summary.json
 
@@ -41,14 +45,18 @@ step4_ratio_threshold.py
        → 절대 cutoff 로 위쪽도 실제 판정하도록 변경.
        다만 test_all 에 위쪽이 양성인 이미지가 없어, 수정 후에도 이 경로는
        검증되지 않는다. 해당 상황이면 출력에 그 사실을 명시한다.
-    5. 포화(G채널 255) 여부를 기록하고 경고한다.
-       포화되면 실제 형광 세기를 알 수 없으므로 ratio 가 과소평가된다.
     2. 보정 방식(none/ratio/shift/affine)을 test_all 정확도로 골랐다.
        최종 검증용 데이터로 파라미터를 선택하면 성능이 부풀려진다.
        → 임계값 도출은 pair 데이터로만, test_all 은 평가 전용으로 분리.
     3. 판정이 delta/ratio/abs 의 OR 조합이었으나 실제 앱은 ratio 단독을 쓴다.
        → ratio 단독을 기본으로 하고 나머지는 비교용 지표로만 기록.
     4. 하드코딩 경로 제거, 오버레이 저장 기본 끄기, 한글 경로 대응.
+    5. 포화(G채널 255) 여부를 기록하고 경고한다.
+       포화되면 실제 형광 세기를 알 수 없으므로 ratio 가 과소평가된다.
+    6. 논문 2.8.5 의 solo/pair 신호 수준 비교가 구현되어 있지 않았다.
+       → 기술통계로 복원. 제출 원본에는 solo/pair 기준 후보를 여러 개 만들어
+       test_all 정확도가 최대인 것을 고르는 스윕이 있었으나, 2번과 같은
+       이유로 되살리지 않았다.
 
 실행 결과 (2026-08, weights.pt)
 
@@ -75,6 +83,22 @@ step4_ratio_threshold.py
     위양성을 더 줄일 수 없다. neg_neg 24장 중 4장이 양성으로 오판되며,
     음성-음성 쌍과 음성-양성 쌍의 ratio 분포가 실제로 겹쳐 있다는 뜻이다.
     이 수치는 논문에 없다.
+
+    solo 와 pair 의 신호 수준
+
+        조건          n    중앙값    평균     SD      CV
+        solo 음성    55    208.0   204.7   11.0    5.4%
+        pair NC      44    198.0   195.8   20.0   10.2%
+
+    Mann-Whitney U p=0.0007 로 유의한 차이가 있다. pair 의 NC 가 약 4.8%
+    어둡다. 이 차이는 T = 221.0 / median(pair NC) 에 이미 반영되어 있으며,
+    solo 기준선을 그대로 썼다면 T = 1.0625 가 되어 위양성이 늘었을 것이다.
+
+    중앙값 차이보다 산포 차이가 크다. SD 가 11.0 에서 20.0 으로 거의 두 배다.
+    비율 정규화가 기기 차이를 상쇄하는 대신 끌어들이는 변동의 크기가 이것이며,
+    위양성 4건이 모두 NC 가 어두운 이미지에서 나온 것과 같은 현상이다.
+    (여기 solo 음성 55장은 train 40 + test 15 이며, step3 의 기준선 221.0 은
+    train 40장만으로 구한 값이라 두 집합은 완전히 같지 않다.)
 
     기기별 NC 형광값
         Galaxy Note 8   209.2
@@ -438,6 +462,64 @@ def main():
     if len(valid) == 0:
         raise SystemExit("유효한 pair 데이터가 없습니다.")
 
+    # ========== 2.5 solo / pair 신호 수준 비교 (논문 2.8.5) ==========
+    # 같은 음성 시료라도 단독 촬영(solo)과 2튜브 동시 촬영(pair 상단 NC)에서
+    # 형광값이 다를 수 있다. 두 좌표계를 잇는 것이 T_ratio 이므로,
+    # 그 전제가 되는 신호 수준 차이를 먼저 기록해 둔다.
+    #
+    # 주의: 여기서 계산한 값은 임계값 도출에 사용하지 않는다. 제출 원본
+    # (step4_pair_solo_relation.py)은 solo/pair 기준 후보를 여러 개 만들어
+    # test_all 정확도가 가장 높은 것을 골랐는데, 최종 검증 데이터로
+    # 파라미터를 고르면 성능이 낙관적으로 평가된다. 기술통계만 남긴다.
+    print("[2.5/4] solo 음성 vs pair NC 비교")
+
+    solo_pair = None
+    if len(solo_neg) and len(nc_vals):
+        m_solo = float(np.median(solo_neg))
+        m_pair = float(np.median(nc_vals))
+        diff_pct = (m_pair - m_solo) / m_solo * 100 if m_solo else float("nan")
+
+        print(f"    solo 음성  n={len(solo_neg):3d}  중앙값 {m_solo:6.1f}  "
+              f"평균 {np.mean(solo_neg):6.1f}  SD {np.std(solo_neg, ddof=1):5.1f}")
+        print(f"    pair NC    n={len(nc_vals):3d}  중앙값 {m_pair:6.1f}  "
+              f"평균 {np.mean(nc_vals):6.1f}  SD {np.std(nc_vals, ddof=1):5.1f}")
+        print(f"    차이 {diff_pct:+.1f}%  (solo 기준으로 pair NC 가 얼마나 다른가)")
+
+        # 정규성이 기각되는 데이터이므로 비모수 검정을 쓴다
+        p_mw = None
+        try:
+            from scipy.stats import mannwhitneyu
+            p_mw = float(mannwhitneyu(solo_neg, nc_vals,
+                                      alternative="two-sided")[1])
+            verdict = "유의한 차이 있음" if p_mw < 0.05 else "유의한 차이 없음"
+            print(f"    Mann-Whitney U  p={p_mw:.4f}  →  {verdict}")
+        except ImportError:
+            print("    (scipy 미설치 — 검정 생략)")
+
+        print(f"    ※ 이 차이는 T_ratio 에 이미 반영되어 있다. "
+              f"T = {args.cutoff_abs} / median(pair NC) 이므로,")
+        print("       solo 좌표계에서 얻은 절대 기준선이 pair 좌표계로 옮겨진다.\n")
+
+        solo_pair = {
+            "description": ("solo 단독 촬영 음성과 pair 상단 NC 의 신호 수준 비교. "
+                            "두 좌표계를 잇는 T_ratio 의 전제에 해당한다. "
+                            "임계값 계산에는 사용하지 않는 기술통계다."),
+            "solo_neg": {
+                "n": len(solo_neg), "median": m_solo,
+                "mean": float(np.mean(solo_neg)),
+                "sd": float(np.std(solo_neg, ddof=1)),
+            },
+            "pair_nc": {
+                "n": len(nc_vals), "median": m_pair,
+                "mean": float(np.mean(nc_vals)),
+                "sd": float(np.std(nc_vals, ddof=1)),
+            },
+            "diff_pct_pair_vs_solo": diff_pct,
+            "mannwhitney_p": p_mw,
+        }
+    else:
+        print("    solo 또는 pair 데이터가 없어 비교를 건너뛴다.\n")
+
     # ================= 3. 임계값 도출 =================
     print("[3/4] 임계값 도출")
 
@@ -500,6 +582,7 @@ def main():
 
     threshold_json = {
         "step3_cutoff_abs": args.cutoff_abs,
+        "solo_pair_relation": solo_pair,
         "pair_nc": {
             "n_all": len(nc_vals), "median_all": med_a2,
             "n_negpos": len(nc_negpos), "median_negpos": med_a1,

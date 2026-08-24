@@ -30,7 +30,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 #   NGD_DATA_ROOT 가 있으면 그 아래의 dataset/ 을 쓰고,
 #   없으면 저장소 안의 data/ 를 쓴다.
 # ------------------------------------------------------------------
-_env_root = os.environ.get("NGD_DATA_ROOT") or os.environ.get("NGD_ROOT")
+_env_root = os.environ.get("NGD_DATA_ROOT")
 
 if _env_root:
     DATA_DIR = Path(_env_root) / "dataset"
