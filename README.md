@@ -2,7 +2,10 @@
 
 스마트폰 기반 임질 진단 시스템
 
-**[앱 실행하기](https://APP_URL.streamlit.app)** · [샘플 이미지로 바로 테스트](data/samples/)
+**[앱 실행하기](https://ngonorrhea-diagnostic-app-tfpfnjgw8ppcs4fqwbrvar.streamlit.app/)** · [샘플 이미지로 바로 테스트](data/samples/)
+
+> 무료 호스팅이라 12시간 동안 접속이 없으면 대기 상태로 전환된다.
+> 대기 화면이 뜨면 "Yes, get this app back up!" 을 누르고 30초쯤 기다리면 된다.
 
 LAMP-CRISPR 형광 반응 결과를 스마트폰으로 촬영해 자동 판독한다.
 YOLOv8로 튜브와 반응 영역(ROI)을 검출하고, ROI의 형광 강도 비율로 양성/음성을 판정한다.
@@ -85,6 +88,9 @@ G채널을 쓰는 이유는 FAM 형광의 발광 파장이 녹색 영역이기 �
 오판된다. Youden's J로 임계값을 최적화해도 같은 값이 나오므로, 임계값 조정으로는
 줄일 수 없는 신호 분포 자체의 겹침이다.
 
+음성-음성 쌍은 26장을 촬영했으나 2장은 ROI가 하나만 검출되어 비율을 계산할 수
+없었다. 위 표의 pair 44장은 `neg_pos` 20장과 `neg_neg` 24장을 합한 것이다.
+
 ---
 
 ## 저장소 구조
@@ -145,7 +151,7 @@ pip install -r requirements.txt
 pip install -r requirements-analysis.txt
 
 # 데이터 위치 지정 (저장소 밖에 있는 경우)
-export NGD_DATA_ROOT=/path/to/data     # Windows: set NGD_DATA_ROOT=...
+export NGD_DATA_ROOT=/path/to/ngd_data     # Windows: set NGD_DATA_ROOT=C:\ngd_data
 
 python paths.py                        # 경로 설정 확인
 python analysis/step1_conf_explorer.py
@@ -156,6 +162,10 @@ python analysis/step4_ratio_threshold.py
 python analysis/roc_analysis.py
 python analysis/negneg_false_positive_check.py
 ```
+
+`NGD_DATA_ROOT` 로 지정하는 것은 데이터 폴더의 **상위 경로**이며, 그 아래에
+`dataset/` 이 있어야 한다. 즉 `NGD_DATA_ROOT=/path/to/ngd_data` 라면
+`/path/to/ngd_data/dataset/solo/train/neg` 와 같은 구조다.
 
 `python paths.py`를 실행하면 각 데이터 폴더의 이미지 개수와 모델 파일이
 제대로 잡히는지 확인할 수 있다.
@@ -171,18 +181,24 @@ python analysis/negneg_false_positive_check.py
 - 클래스: `roi`, `tube` — **2개** (논문 기재 3개와 다르다)
 - 학습: 300 epoch 설정, patience 90으로 **213 epoch에서 조기 종료** (best는 123 epoch)
 - 입력 크기: 640, seed 0
-- ultralytics 8.3.171, 학습 시각 2025-11-04
+- ultralytics 8.3.171, 학습 완료 2025-11-04 03:13 KST
+  (가중치 메타데이터에는 2025-11-03T18:13 UTC 로 기록되어 있다)
+
+제출 당시 폴더에는 `weights.pt`(초기 1클래스 모델)와 `new_weights.pt`(2클래스)가
+함께 있었고 실제로 사용한 것은 후자다. 이 저장소의 `models/weights.pt` 는
+`new_weights.pt` 를 옮기며 이름을 바꾼 파일이다.
 
 ### 학습 데이터셋
 
 Roboflow `hajamboree/tube_detection-thlv6` **v8** (2025-11-04, 700장).
 
-- 원본 244개를 train 149 / valid 47 / test 48 로 분할
-- train 에만 증강 적용 (회전 ±15°, 밝기 ±15%) → 600장
-- valid 50장, test 50장은 원본 그대로
+- 원본 300개를 train 200 / valid 50 / test 50 으로 분할
+- train 에만 증강 적용 (회전 ±15°, 밝기 ±15%) 3배 → 600장
+- valid 50장, test 50장은 원본 그대로 (600 + 50 + 50 = 700)
 
 분할을 직접 확인한 결과 **동일 원본이 여러 split 에 들어간 사례는 없었다.**
-파일명 앞부분이 겹치는 경우가 있으나 서로 다른 이미지다.
+파일명 앞부분이 겹치는 경우가 있으나 서로 다른 이미지다. 원본 수는 증강을
+적용하지 않은 별도 버전(v10)을 생성해 300장임을 확인했다.
 
 Roboflow 보고 성능은 mAP@50 99.9%, Precision 99.1%, Recall 100%, F1 99.6% 다.
 논문에 기재된 mAP@50 99.0% 는 실제 값과 다르다.

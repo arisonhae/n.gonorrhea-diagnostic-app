@@ -38,6 +38,12 @@ T_ratio = step3_cutoff / median(pair NC 형광값)
 NC 이므로 기준 분포에 포함할 수 있다. 원본 시점에는 이 데이터가
 아직 없었기 때문에 반영되지 않았다.
 
+26장 중 2장(`neg_neg_25`, `neg_neg_26`)은 ROI 가 1개만 검출되어 비율을
+계산할 수 없었다. 따라서 기준 분포에 들어간 것은 24장이며, pair NC 는
+neg_pos 20 + neg_neg 24 = 44 개다. 제외 사유는
+`results/step4_ratio/pair_analysis.csv` 의 `note` 열에 `ROI_PARTIAL` 로
+기록되어 있다.
+
 ```
 221.0 / 198.00 = 1.1162   (n=20 → n=44)
 ```
