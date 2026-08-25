@@ -2,6 +2,7 @@
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22090179.svg)](https://doi.org/10.5281/zenodo.22090179)
 
 스마트폰 기반 임질 진단 시스템
+
 **[앱 실행하기](https://ngonorrhea-diagnostic-app-tfpfnjgw8ppcs4fqwbrvar.streamlit.app/)** · [샘플 이미지로 바로 테스트](data/samples/)
 
 > 무료 호스팅이라 12시간 동안 접속이 없으면 대기 상태로 전환된다.
