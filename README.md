@@ -1,5 +1,7 @@
 # GonoCheck
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22090179.svg)](https://doi.org/10.5281/zenodo.22090179)
+
+[![Code DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22090179.svg)](https://doi.org/10.5281/zenodo.22090179)
+[![Dataset DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22090186.svg)](https://doi.org/10.5281/zenodo.22090186)
 
 스마트폰 기반 임질 진단 시스템
 
