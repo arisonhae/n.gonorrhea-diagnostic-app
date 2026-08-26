@@ -17,14 +17,19 @@ import math
 from scipy.stats import ttest_ind
 
 # ================== 환경에 맞게 경로 수정 ==================
-BASE_DIR = r"C:\n.gonorrhea_diagnostic_app\pilotimage_2"
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from paths import PILOT_2_MAGNIFICATION, OUT_PILOT
+BASE_DIR = str(PILOT_2_MAGNIFICATION)
 # =========================================================
 
 CLEAN_PREVIEWS = True
 EXCLUDE_MAGS_MANUAL = {1.0}        # 1배율은 수동 제외
 ROI_SUCCESS_THRESHOLD = 0.0        # 자동 제외 비활성화 (원하면 0.5~0.7)
 
-ANALYSIS_ROOT = Path(BASE_DIR) / "_analysis"
+ANALYSIS_ROOT = OUT_PILOT / "pilot_2_magnification"
 PREVIEW_ROOT  = ANALYSIS_ROOT / "previews"
 SUMMARY_JSON  = ANALYSIS_ROOT / "summary.json"
 
@@ -297,5 +302,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# python pilot_2.py

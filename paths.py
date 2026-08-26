@@ -5,7 +5,6 @@ paths.py
 
 기존 스크립트들은 C:\\n.gonorrhea_diagnostic_app\\... 을 하드코딩하고 있었다.
 그 경우 다른 컴퓨터에서는 전부 실패하므로, 경로를 여기 한 곳에서만 정의한다.
-(analysis/pilot/ 의 스크립트는 아직 이관되지 않아 절대 경로가 남아 있다.)
 
 데이터 위치는 환경변수 NGD_DATA_ROOT 로 지정한다.
 지정하지 않으면 저장소 안의 data/ 를 본다.
@@ -31,15 +30,18 @@ REPO_ROOT = Path(__file__).resolve().parent
 
 # ------------------------------------------------------------------
 # 데이터 루트
-#   NGD_DATA_ROOT 가 있으면 그 아래의 dataset/ 을 쓰고,
-#   없으면 저장소 안의 data/ 를 쓴다.
+#   DATA_ROOT : NGD_DATA_ROOT 자체. raw_* 폴더들이 이 아래에 있다.
+#   DATA_DIR  : 분석용으로 정리한 dataset/. step1~4 는 이것만 읽는다.
+#   환경변수가 없으면 둘 다 저장소 안의 data/ 를 가리킨다.
 # ------------------------------------------------------------------
 _env_root = os.environ.get("NGD_DATA_ROOT")
 
 if _env_root:
-    DATA_DIR = Path(_env_root) / "dataset"
+    DATA_ROOT = Path(_env_root)
+    DATA_DIR = DATA_ROOT / "dataset"
 else:
-    DATA_DIR = REPO_ROOT / "data"
+    DATA_ROOT = REPO_ROOT / "data"
+    DATA_DIR = DATA_ROOT
 
 # ---- solo: 튜브 1개, 절댓값 분석용 ----
 SOLO_TRAIN = DATA_DIR / "solo" / "train"
@@ -73,6 +75,25 @@ DEVICE_SETS = {
     "iphone13pro": TEST_IPHONE13PRO,
 }
 
+# ------------------------------------------------------------------
+# 촬영 조건 최적화 실험 (pilot)
+#
+#   raw_pilot/ 은 dataset/ 과 같은 층에 있다. dataset/ 은 분석용으로
+#   정리한 238장이고, raw_* 는 촬영 원본 전체다. pilot 은 dataset/ 으로
+#   정리되기 전에 수행한 예비 실험이므로 원본 쪽을 읽는다.
+#   따라서 DATA_DIR 이 아니라 DATA_ROOT 를 기준으로 한다.
+#
+#   실험 내용과 결과는 analysis/pilot/README.md 를 참고한다.
+# ------------------------------------------------------------------
+PILOT_DIR = DATA_ROOT / "raw_pilot"
+
+PILOT_1_WAVELENGTH = PILOT_DIR / "pilot_1_wavelength"        # Blue / White LED
+PILOT_2_MAGNIFICATION = PILOT_DIR / "pilot_2_magnification"  # 0.5x ~ 3x
+PILOT_3_ROTATION = PILOT_DIR / "pilot_3_rotation"            # 0° ~ 315°
+PILOT_4_INTENSITY = PILOT_DIR / "pilot_4_intensity"          # 조명 3단계
+PILOT_5_DEVICE = PILOT_DIR / "pilot_5_device"                # 기기 4종
+PILOT_6_PAIR = PILOT_DIR / "pilot_6_pair"                    # 이중 시료 배치
+
 # ---- 저장소 안 예시 이미지 ----
 #   이것만은 DATA_DIR 이 아니라 항상 저장소를 본다.
 #   NGD_DATA_ROOT 설정 없이도 앱과 샘플이 동작해야 하기 때문이다.
@@ -105,6 +126,12 @@ OUT_STEP3 = RESULTS_DIR / "step3_threshold"
 OUT_STEP4 = RESULTS_DIR / "step4_ratio"
 OUT_ROC = RESULTS_DIR / "roc"
 OUT_NEGNEG = RESULTS_DIR / "negneg_check"
+
+# pilot 스크립트는 원래 원본 이미지 폴더 안에 결과를 썼다.
+# 이관하면서 다른 단계와 같이 results/ 아래로 모은다.
+# pilot 산출물은 프리뷰 이미지가 많아 137 MB 에 달한다.
+# 저장소가 아니라 데이터 루트 아래에 쓰고, Zenodo 로 배포한다.
+OUT_PILOT = DATA_ROOT / "pilot_outputs"
 
 # ------------------------------------------------------------------
 # 판정 파라미터 — analysis 단계에서 확정된 값
@@ -141,7 +168,7 @@ def check(*paths) -> None:
         raise FileNotFoundError(
             "다음 경로를 찾을 수 없습니다:\n  "
             + "\n  ".join(missing)
-            + f"\n\n현재 데이터 루트: {DATA_DIR}"
+            + f"\n\n현재 데이터 루트: {DATA_ROOT}"
             + "\n환경변수 NGD_DATA_ROOT 로 데이터 위치를 지정할 수 있습니다."
         )
 
@@ -151,6 +178,7 @@ if __name__ == "__main__":
     print("경로 설정 확인")
     print("=" * 60)
     print(f"REPO_ROOT   : {REPO_ROOT}")
+    print(f"DATA_ROOT   : {DATA_ROOT}")
     print(f"DATA_DIR    : {DATA_DIR}")
     print(f"  (환경변수 NGD_DATA_ROOT = {os.environ.get('NGD_DATA_ROOT', '미설정')})")
     if not _env_root:
@@ -171,6 +199,12 @@ if __name__ == "__main__":
         ("test_all/galaxynote8", TEST_GALAXY_NOTE8),
         ("test_all/iphone13", TEST_IPHONE13),
         ("test_all/iphone13pro", TEST_IPHONE13PRO),
+        ("pilot/1_wavelength", PILOT_1_WAVELENGTH),
+        ("pilot/2_magnification", PILOT_2_MAGNIFICATION),
+        ("pilot/3_rotation", PILOT_3_ROTATION),
+        ("pilot/4_intensity", PILOT_4_INTENSITY),
+        ("pilot/5_device", PILOT_5_DEVICE),
+        ("pilot/6_pair", PILOT_6_PAIR),
         ("data/samples", SAMPLES),
         ("models/weights", WEIGHTS_PATH),
     ]

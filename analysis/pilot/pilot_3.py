@@ -11,9 +11,16 @@ from pathlib import Path
 from datetime import datetime
 from PIL import Image, ImageOps
 
+# ================== 환경에 맞게 경로 수정 ==================
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from paths import PILOT_3_ROTATION, OUT_PILOT
+BASE_DIR = str(PILOT_3_ROTATION)
+# =========================================================
 
 # ========== 설정 ==========
-BASE_DIR = r"C:\n.gonorrhea_diagnostic_app\pilotimage_3"
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 
 
@@ -243,7 +250,7 @@ def main():
         print(f"{d}: {'OK' if d.is_dir() else 'MISSING'}")
     print()
 
-    analysis_root = base / "_analysis"
+    analysis_root = OUT_PILOT / "pilot_3_rotation"
     preview_root = analysis_root / "previews"
     analysis_root.mkdir(exist_ok=True, parents=True)
     preview_root.mkdir(exist_ok=True, parents=True)
@@ -311,5 +318,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
-# python pilot_3.py

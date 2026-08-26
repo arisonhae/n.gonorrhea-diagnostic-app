@@ -11,8 +11,14 @@ from pathlib import Path
 from datetime import datetime
 from PIL import Image, ImageOps
 
-# 내 폴더 위치
-BASE_DIR = r"C:\n.gonorrhea_diagnostic_app\pilotimage_1"
+# ================== 환경에 맞게 경로 수정 ==================
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from paths import PILOT_1_WAVELENGTH, OUT_PILOT
+BASE_DIR = str(PILOT_1_WAVELENGTH)
+# ==========================================================
 
 # --------- 유틸 ---------
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -234,7 +240,7 @@ def main():
     print(f"White Negative: {len(wn_files)}")
     print()
 
-    analysis_root = base / "_analysis"
+    analysis_root = OUT_PILOT / "pilot_1_wavelength"
     preview_root = analysis_root / "previews"
     analysis_root.mkdir(exist_ok=True, parents=True)
     preview_root.mkdir(exist_ok=True, parents=True)
@@ -298,6 +304,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-# python pilot_1.py

@@ -18,8 +18,14 @@ try:
 except Exception:
     stats = None
 
-# ===== 설정 =====
-BASE_DIR = r"C:\n.gonorrhea_diagnostic_app\pilotimage_4"
+# ================== 환경에 맞게 경로 수정 ==================
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from paths import PILOT_4_INTENSITY, OUT_PILOT
+BASE_DIR = str(PILOT_4_INTENSITY)
+# =========================================================
 
 # ===== 공통 유틸 =====
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -256,7 +262,7 @@ def main():
     print(f"\n발견된 밝기 단계: {[d.name for d in intensity_folders]}")
 
     # 분석 폴더
-    analysis_root = base / "_analysis"
+    analysis_root = OUT_PILOT / "pilot_4_intensity"
     preview_root = analysis_root / "previews"
     analysis_root.mkdir(exist_ok=True, parents=True)
     preview_root.mkdir(exist_ok=True, parents=True)
@@ -342,5 +348,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# python pilot_4.py

@@ -8,8 +8,14 @@ import json
 from datetime import datetime
 
 # === 경로 설정 ===
-IMG_DIR = Path(r"C:\n.gonorrhea_diagnostic_app\pilotimage_6\neg_pos")
-OUT_DIR = Path(r"C:\n.gonorrhea_diagnostic_app\pilotimage_6\_analysis_dualbright")
+# 이 파일에서 실제로 실행되는 것은 이 블록(이중 밝기 검출)뿐이다.
+# 아래 103행 이후는 삼중따옴표로 묶여 있어 실행되지 않는다.
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from paths import PILOT_6_PAIR, OUT_PILOT
+
+IMG_DIR = PILOT_6_PAIR / "neg_pos"
+OUT_DIR = OUT_PILOT / "pilot_6_dualbright"
 OUT_DIR.mkdir(exist_ok=True, parents=True)
 
 # === ROI 크기 설정 ===
@@ -718,5 +724,3 @@ print(f"\n[저장] {csv_path}")
 print(f"[저장] {json_path}")
 print(f"[프리뷰 폴더] {PREV_DIR}")
 '''
-
-# python pilot_6.py

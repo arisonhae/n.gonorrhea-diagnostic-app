@@ -1,5 +1,8 @@
 # GonoCheck
 
+[![Code DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22090179.svg)](https://doi.org/10.5281/zenodo.22090179)
+[![Dataset DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22090186.svg)](https://doi.org/10.5281/zenodo.22090186)
+
 스마트폰 기반 임질 진단 시스템
 
 **[앱 실행하기](https://ngonorrhea-diagnostic-app-tfpfnjgw8ppcs4fqwbrvar.streamlit.app/)** · [샘플 이미지로 바로 테스트](data/samples/)
@@ -109,7 +112,7 @@ G채널을 쓰는 이유는 FAM 형광의 발광 파장이 녹색 영역이기 �
 │   │
 │   ├── roc_analysis.py                   ROC / AUC
 │   ├── negneg_false_positive_check.py    음성-음성 쌍 위양성 확인
-│   └── pilot/                            촬영 조건 최적화 실험
+│   └── pilot/                            촬영 조건 최적화 실험 (pilot_1~6)
 │
 ├── data/samples/               예시 이미지 9장 + 기대 결과
 ├── results/                    분석 결과 (csv, json, 그래프)
@@ -123,6 +126,9 @@ G채널을 쓰는 이유는 FAM 형광의 발광 파장이 녹색 영역이기 �
 
 원본 이미지는 용량 문제로 저장소에 포함하지 않았다.
 구조와 촬영 조건은 [data/README.md](data/README.md)를 참고하면 된다.
+
+전체 이미지 데이터(2.7 GB)는 Zenodo 에 있다:
+[10.5281/zenodo.22090186](https://doi.org/10.5281/zenodo.22090186)
 
 ---
 
@@ -169,6 +175,21 @@ python analysis/negneg_false_positive_check.py
 
 `python paths.py`를 실행하면 각 데이터 폴더의 이미지 개수와 모델 파일이
 제대로 잡히는지 확인할 수 있다.
+
+촬영 조건 최적화 실험은 별도로 실행한다. 본 파이프라인과 무관하며,
+`dataset/` 이 아니라 `raw_pilot/` 의 촬영 원본을 읽는다.
+
+```bash
+python analysis/pilot/pilot_1.py    # 조명 파장
+python analysis/pilot/pilot_2.py    # 광학 배율
+python analysis/pilot/pilot_3.py    # 회전 각도
+python analysis/pilot/pilot_4.py    # 조명 강도
+python analysis/pilot/pilot_6.py    # 이중 시료 배치
+streamlit run analysis/pilot/pilot_5.py   # 기기 비교 결과 뷰어
+```
+
+pilot 산출물은 프리뷰 이미지가 많아 137 MB 에 달하므로 저장소가 아니라
+`$NGD_DATA_ROOT/pilot_outputs/` 아래에 저장된다.
 
 검출 오버레이 이미지는 기본적으로 저장하지 않는다. 필요하면 `--save_viz`를
 붙인다. 다만 이미지 수만큼 파일이 생성된다.
@@ -245,7 +266,8 @@ Roboflow 보고 성능은 mAP@50 99.9%, Precision 99.1%, Recall 100%, F1 99.6% �
 
 **촬영 조건 최적화 실험은 조건당 2~20장으로 수행했으나** 대부분의 조건에서
 통계적 유의성을 확보하지 못했다. 조명 강도는 세 조건 모두 p > 0.05 였고,
-배율은 2x 에서만 p < 0.05 였다. 자세한 내용은
+배율은 2x 에서만 p < 0.05 였다(p = 0.0077). 다만 2.5x 가 p = 0.0503 으로
+경계에 거의 붙어 있어, 표본이 늘면 이 구분은 뒤집힐 수 있다. 자세한 내용은
 [analysis/pilot/README.md](analysis/pilot/README.md) 참고.
 
 ### 통계적 한계

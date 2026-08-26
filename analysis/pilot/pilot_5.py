@@ -17,14 +17,24 @@ try:
 except Exception:
     pass
 
-DEFAULT_BASE = r"C:\n.gonorrhea_diagnostic_app\pilotimage_5"
+# ================== 환경에 맞게 경로 수정 ==================
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from paths import OUT_PILOT
+# 이 스크립트는 분석기가 아니라 결과 뷰어다. 촬영 원본이 아니라
+# 산출물 폴더를 읽는다. summary_means.json 을 만드는 코드는
+# 저장소에 남아 있지 않다 (analysis/pilot/README.md 참고).
+DEFAULT_BASE = str(OUT_PILOT / "pilot_5_device_submission")
+# =========================================================
 
 st.set_page_config(page_title="파일럿 평균 분석 뷰어", layout="wide")
 st.title("📊 파일럿 5 (평균 중심): 기기별 비교")
 
 # ====== 경로 입력 & 로드 ======
-base_dir = st.text_input("파일럿 베이스 폴더 (summary_means.json이 있는 폴더)", value=DEFAULT_BASE)
-analysis_dir = Path(base_dir) / "_analysis"
+base_dir = st.text_input("summary_means.json 이 있는 폴더", value=DEFAULT_BASE)
+analysis_dir = Path(base_dir)
 summary_path = analysis_dir / "summary_means.json"
 
 if not summary_path.exists():
@@ -317,5 +327,3 @@ else:
 
 st.caption(f"요약 파일: {summary_path}")
 st.caption(f"생성 시각: {data.get('generated_at','N/A')}")
-
-# streamlit run pilot_5.py
