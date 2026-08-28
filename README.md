@@ -1,7 +1,7 @@
 # GonoCheck
 
 [![Code DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22090179.svg)](https://doi.org/10.5281/zenodo.22090179)
-[![Dataset DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22090186.svg)](https://doi.org/10.5281/zenodo.22090186)
+[![Dataset DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22090185.svg)](https://doi.org/10.5281/zenodo.22090185)
 
 스마트폰 기반 임질 진단 시스템
 
@@ -128,7 +128,7 @@ G채널을 쓰는 이유는 FAM 형광의 발광 파장이 녹색 영역이기 �
 구조와 촬영 조건은 [data/README.md](data/README.md)를 참고하면 된다.
 
 전체 이미지 데이터(2.7 GB)는 Zenodo 에 있다:
-[10.5281/zenodo.22090186](https://doi.org/10.5281/zenodo.22090186)
+[10.5281/zenodo.22090185](https://doi.org/10.5281/zenodo.22090185)
 
 ---
 

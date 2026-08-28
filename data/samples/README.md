@@ -4,7 +4,7 @@
 전체 데이터셋 구조는 상위 [data/README.md](../README.md) 참고.
 
 ```bash
-streamlit run app_real.py
+streamlit run app.py
 ```
 
 앱을 띄운 뒤 각 이미지를 올리면 아래 결과가 나온다.
@@ -115,7 +115,7 @@ ratio 1.343 으로 정확히 양성이 나온다.
 모든 이미지는 아래 조건으로 촬영했다.
 
 ```
-iPhone 13 Pro · 2x 배율 · Blue LED 조명 3단계 · 20cm 거리 · 야간모드 OFF
+iPhone 13 Pro · 2x 배율 · Blue LED 조명 3단계 · transilluminator 표면에서 20 cm · 야간모드 OFF
 ```
 
 조건을 정한 근거는 [analysis/pilot/README.md](../../analysis/pilot/README.md) 에 있다.
