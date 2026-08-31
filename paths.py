@@ -129,7 +129,7 @@ OUT_NEGNEG = RESULTS_DIR / "negneg_check"
 
 # pilot 스크립트는 원래 원본 이미지 폴더 안에 결과를 썼다.
 # 이관하면서 다른 단계와 같이 results/ 아래로 모은다.
-# pilot 산출물은 프리뷰 이미지가 많아 137 MB 에 달한다.
+# pilot 산출물은 프리뷰 이미지가 많아 229 MB 에 달한다.
 # 저장소가 아니라 데이터 루트 아래에 쓰고, Zenodo 로 배포한다.
 OUT_PILOT = DATA_ROOT / "pilot_outputs"
 
